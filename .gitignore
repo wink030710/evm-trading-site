@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.vite/
+*.log
+.DS_Store
+
+# local env (contains secrets)
+.env
+apps/api/.env
+apps/web/.env
+
+# local api db
+apps/api/data/db.json

@@ -1,0 +1,3 @@
+[
+  "function getAlphaPrice(uint16 netuid) external view returns (uint256)"
+]

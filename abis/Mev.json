@@ -1,0 +1,7 @@
+[
+  "function owner() view returns (address)",
+  "function withdrawAll()",
+  "function ForceStake(uint256 stakeAmount, uint256 alphaNetuid)",
+  "function emergencyWithdrawTao(address to, uint256 amount)",
+  "function balance() view returns (uint256)"
+]

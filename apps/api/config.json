@@ -1,0 +1,19 @@
+{
+  "chain": {
+    "chainId": 964,
+    "rpcUrl": "http://185.8.107.85:9944"
+  },
+  "security": {
+    "jwtIssuer": "evm-staking-site",
+    "jwtAudience": "evm-staking-site-web",
+    "tokenTtlSeconds": 86400
+  },
+  "contracts": {
+    "defaultAbiFile": "StakingContract.json",
+    "stakingAbiFile": "IStaking.json",
+    "stakingAddress": "0x0000000000000000000000000000000000000805",
+    "alphaAbiFile": "IAlpha.json",
+    "alphaAddress": "0x0000000000000000000000000000000000000808",
+    "hotkey": "0xb4c087119097fbe3985298eef52f35ef6271c48322a8c2d430902a9cc38d9473"
+  }
+}
