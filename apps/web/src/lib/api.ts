@@ -120,6 +120,8 @@ export type StakeRow = {
   netuid: number
   alphaAmount: string
   taoAmount: string
+  stakedPrice?: string
+  currentPrice?: string
 }
 
 export async function listStakes(id: string) {

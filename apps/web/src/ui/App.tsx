@@ -1458,7 +1458,7 @@ function ContractDetail(props: {
               ) : null}
 
               <div style={{ overflowX: 'auto' }}>
-                <table className="table" style={{ width: '100%', minWidth: 640 }}>
+                <table className="table" style={{ width: '100%', minWidth: 880 }}>
                   <thead>
                     <tr>
                       <th>
@@ -1507,58 +1507,79 @@ function ContractDetail(props: {
                           Tao Amount{sorting.key === 'tao' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </button>
                       </th>
+                      <th style={{ textAlign: 'right' }}>Staked Price</th>
+                      <th style={{ textAlign: 'right' }}>Current Price</th>
+                      <th style={{ textAlign: 'right' }}>% Change</th>
                       <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(pagedStakes || []).map((s) => (
-                      <tr key={String(s.netuid)}>
-                        <td>{s.netuid}</td>
-                        <td className="mono" style={{ textAlign: 'right' }}>
-                          {s.alphaAmount}
-                        </td>
-                        <td className="mono" style={{ textAlign: 'right' }}>
-                          {s.taoAmount}
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <button
-                            type="button"
-                            className="btn btnDanger btnTiny"
-                            disabled={actionsDisabled}
-                            onClick={async (e) => {
-                              e.preventDefault()
-                              props.onError(null)
-                              setActionError(null)
+                    {(pagedStakes || []).map((s) => {
+                      const stakedPriceNum = safeDecimalNumber(String(s.stakedPrice ?? '').trim())
+                      const currentPriceNum = safeDecimalNumber(String(s.currentPrice ?? '').trim())
+                      const pctChange =
+                        stakedPriceNum !== null && currentPriceNum !== null && stakedPriceNum !== 0
+                          ? ((currentPriceNum - stakedPriceNum) / stakedPriceNum) * 100
+                          : null
 
-                              const netuidValue = s.netuid
+                      return (
+                        <tr key={String(s.netuid)}>
+                          <td>{s.netuid}</td>
+                          <td className="mono" style={{ textAlign: 'right' }}>
+                            {s.alphaAmount}
+                          </td>
+                          <td className="mono" style={{ textAlign: 'right' }}>
+                            {s.taoAmount}
+                          </td>
+                          <td className="mono" style={{ textAlign: 'right' }}>
+                            {s.stakedPrice ?? '-'}
+                          </td>
+                          <td className="mono" style={{ textAlign: 'right' }}>
+                            {s.currentPrice ?? '-'}
+                          </td>
+                          <td className="mono" style={{ textAlign: 'right' }}>
+                            {pctChange === null ? '-' : `${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%`}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button
+                              type="button"
+                              className="btn btnDanger btnTiny"
+                              disabled={actionsDisabled}
+                              onClick={async (e) => {
+                                e.preventDefault()
+                                props.onError(null)
+                                setActionError(null)
 
-                              const ok = await props.confirm({
-                                title: 'Submit remove stake',
-                                message: `netuid=${netuidValue}`,
-                                confirmText: 'Submit',
-                                cancelText: 'Cancel',
-                                danger: true
-                              })
-                              if (!ok) return
+                                const netuidValue = s.netuid
 
-                              setSubmitting('remove')
-                              try {
-                                const resp = await removeStake(props.contract.id, { netuid: netuidValue })
-                                props.requestRefresh()
-                              } catch (err: any) {
-                                const msg = err?.message || 'remove_stake_failed'
-                                props.onError(msg)
-                                setActionError(msg)
-                              } finally {
-                                setSubmitting(null)
-                              }
-                            }}
-                          >
-                            Remove
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                                const ok = await props.confirm({
+                                  title: 'Submit remove stake',
+                                  message: `netuid=${netuidValue}`,
+                                  confirmText: 'Submit',
+                                  cancelText: 'Cancel',
+                                  danger: true
+                                })
+                                if (!ok) return
+
+                                setSubmitting('remove')
+                                try {
+                                  const resp = await removeStake(props.contract.id, { netuid: netuidValue })
+                                  props.requestRefresh()
+                                } catch (err: any) {
+                                  const msg = err?.message || 'remove_stake_failed'
+                                  props.onError(msg)
+                                  setActionError(msg)
+                                } finally {
+                                  setSubmitting(null)
+                                }
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

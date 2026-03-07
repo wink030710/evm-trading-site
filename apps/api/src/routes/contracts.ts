@@ -533,6 +533,8 @@ export function createContractsRouter() {
       );
       const stakes: {
         netuid: number;
+        stakedPrice: string;
+        currentPrice: string;
         alphaAmount: string;
         taoAmount: string;
       }[] = [];
@@ -546,6 +548,7 @@ export function createContractsRouter() {
           : await getContract(record.address, abiFile, record.ownerAddress);
       if (record.type === "Trading") {
         const [prices, taoInPool, staked] = await contract.getInfo();
+        const stakedPrices = await contract.getStakedPrices();
         for (let i = 0; i < 129; i++) {
           if (!staked[i]) continue;
           const amount = (await stakingContract.getStake(
@@ -557,42 +560,12 @@ export function createContractsRouter() {
           stakes.push({
             netuid: i,
             taoAmount: (Number(amount * prices[i]) / 1e27).toFixed(5),
+            stakedPrice: (Number(stakedPrices[i]) / 1e18).toFixed(5),
+            currentPrice: (Number(prices[i]) / 1e18).toFixed(5),
             alphaAmount: (Number(amount) / 1e9).toFixed(5),
           });
         }
       } else if (record.type === "MEV") {
-
-      } else if (record.type === "Unknown") {
-        let alphaAbiFile: string;
-        try {
-          alphaAbiFile = await resolveAbiFile(
-            config.contracts.alphaAbiFile,
-          );
-        } catch (e: any) {
-          return res
-            .status(500)
-            .json({ error: e?.message || "abi_resolve_failed" });
-        }
-        const alphaContract = await getReadOnlyContract(
-          config.contracts.alphaAddress,
-          alphaAbiFile,
-        );
-        for (let i = 0; i < 129; i++) {
-          const amount = (await stakingContract.getStake(
-            config.contracts.hotkey,
-            record.coldkey,
-            i,
-          )) as bigint;
-          if (amount === 0n) continue;
-          const price = (await alphaContract.getAlphaPrice(
-            i,
-          )) as bigint;
-          stakes.push({
-            netuid: i,
-            taoAmount: (Number(amount * price) / 1e27).toFixed(5),
-            alphaAmount: (Number(amount) / 1e9).toFixed(5),
-          });
-        }
 
       }
       return res.json({ stakes });
