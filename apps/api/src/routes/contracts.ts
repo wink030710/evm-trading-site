@@ -17,7 +17,7 @@ import { type ContractRecord, getDb, newId } from "../services/storage.js";
 const contractCreateSchema = z
   .object({
     name: z.string().min(1),
-    type: z.enum(["MEV", "Trading", "Unknown"]),
+    type: z.enum(["MEV", "Trading", "TradingV2", "Unknown"]),
     address: z.string().min(1),
     ownerAddress: z.string().min(1).optional(),
     ownerIndex: z.coerce.number().int().nonnegative().optional(),
@@ -165,7 +165,7 @@ export function createContractsRouter() {
         changed = true;
       }
       const t = String((c as any).type || "").trim();
-      if (t !== "MEV" && t !== "Trading" && t !== "Unknown") {
+      if (t !== "MEV" && t !== "Trading" && t !== "TradingV2" && t !== "Unknown") {
         (c as any).type = "Trading";
         changed = true;
       }
@@ -563,6 +563,20 @@ export function createContractsRouter() {
             stakedPrice: (Number(stakedPrices[i]) / 1e18).toFixed(5),
             currentPrice: (Number(prices[i]) / 1e18).toFixed(5),
             alphaAmount: (Number(amount) / 1e9).toFixed(5),
+          });
+        }
+      } else if (record.type === "TradingV2") {
+        const [prices, taoInPool, staked1, staked2, stakedPrices1, stakedPrices2] = await contract.getInfoV2();
+        const stakedAmounts1 = await contract.getStakedAmount("0x194b5e98c2becf35e7544a332c34fce386b7ea4c661e57d79c7b4f2083e514dd");
+        const stakedAmounts2 = await contract.getStakedAmount(record.coldkey);
+        for (let i = 0; i < 129; i++) {
+          if (!staked1[i] && !staked2[i]) continue;
+          stakes.push({
+            netuid: i,
+            taoAmount: (Number((staked1[i] ? stakedAmounts1[i] : stakedAmounts2[i]) * prices[i]) / 1e27).toFixed(5),
+            stakedPrice: (Number(staked1[i] ? stakedPrices1[i] : stakedPrices2[i]) / 1e18).toFixed(5),
+            currentPrice: (Number(prices[i]) / 1e18).toFixed(5),
+            alphaAmount: (Number(staked1[i] ? stakedAmounts1[i] : stakedAmounts2[i]) / 1e9).toFixed(5),
           });
         }
       } else if (record.type === "MEV") {

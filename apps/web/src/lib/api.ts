@@ -5,7 +5,7 @@ export type ApiError = {
 export type ContractRecord = {
   id: string
   name: string
-  type: 'MEV' | 'Trading' | 'Unknown'
+  type: 'MEV' | 'Trading' | 'TradingV2' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -72,7 +72,7 @@ export async function listAbiFiles() {
 
 export async function createContract(input: {
   name: string
-  type: 'MEV' | 'Trading' | 'Unknown'
+  type: 'MEV' | 'Trading' | 'TradingV2' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number

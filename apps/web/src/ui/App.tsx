@@ -369,7 +369,7 @@ function Authed(props: { onError: (e: string | null) => void }) {
             confirm={confirm}
             onCreate={async (input: {
               name: string
-              type: 'MEV' | 'Trading' | 'Unknown'
+              type: 'MEV' | 'Trading' | 'TradingV2' | 'Unknown'
               address: string
               ownerAddress: string
               ownerIndex?: number
@@ -568,7 +568,7 @@ function ContractCreate(props: {
   confirm: (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>
   onCreate: (input: {
     name: string
-    type: 'MEV' | 'Trading' | 'Unknown'
+    type: 'MEV' | 'Trading' | 'TradingV2' | 'Unknown'
     address: string
     ownerAddress: string
     ownerIndex?: number
@@ -577,7 +577,7 @@ function ContractCreate(props: {
   }) => Promise<void>
 }) {
   const [name, setName] = useState('')
-  const [type, setType] = useState<'MEV' | 'Trading' | 'Unknown'>('Trading')
+  const [type, setType] = useState<'MEV' | 'Trading' | 'TradingV2' | 'Unknown'>('Trading')
   const [address, setAddress] = useState('')
   const [ownerIndex, setOwnerIndex] = useState<string>('')
   const [abiFile, setAbiFile] = useState('')
@@ -638,9 +638,10 @@ function ContractCreate(props: {
         className="input"
         value={type}
         disabled={props.disabled || props.creating}
-        onChange={(e) => setType(e.target.value as 'MEV' | 'Trading' | 'Unknown')}
+        onChange={(e) => setType(e.target.value as 'MEV' | 'Trading' | 'TradingV2' | 'Unknown')}
       >
         <option value="Trading">Trading</option>
+        <option value="TradingV2">TradingV2</option>
         <option value="MEV">MEV</option>
         <option value="Unknown">Unknown</option>
       </select>
