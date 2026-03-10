@@ -5,7 +5,7 @@ export type ApiError = {
 export type ContractRecord = {
   id: string
   name: string
-  type: 'MEV' | 'Trading' | 'TradingV2' | 'Unknown'
+  type: 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -72,7 +72,7 @@ export async function listAbiFiles() {
 
 export async function createContract(input: {
   name: string
-  type: 'MEV' | 'Trading' | 'TradingV2' | 'Unknown'
+  type: 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -109,6 +109,13 @@ export async function removeStake(id: string, input: { netuid: number }) {
   })
 }
 
+export async function resetStake(id: string, input: { netuid: number }) {
+  return request<TxResponse>(`/contracts/${id}/reset-stake`, {
+    method: 'POST',
+    body: JSON.stringify(input)
+  })
+}
+
 export async function withdraw(id: string, input: { amount: string; to?: string }) {
   return request<TxResponse>(`/contracts/${id}/withdraw`, {
     method: 'POST',
@@ -120,6 +127,7 @@ export type StakeRow = {
   netuid: number
   alphaAmount: string
   taoAmount: string
+  taoInPool?: string
   stakedPrice?: string
   currentPrice?: string
 }

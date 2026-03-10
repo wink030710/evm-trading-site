@@ -11,6 +11,7 @@ import {
   listStakes,
   login,
   removeStake,
+  resetStake,
   setToken,
   withdraw,
   type ContractRecord,
@@ -369,7 +370,7 @@ function Authed(props: { onError: (e: string | null) => void }) {
             confirm={confirm}
             onCreate={async (input: {
               name: string
-              type: 'MEV' | 'Trading' | 'TradingV2' | 'Unknown'
+              type: 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'
               address: string
               ownerAddress: string
               ownerIndex?: number
@@ -568,7 +569,7 @@ function ContractCreate(props: {
   confirm: (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>
   onCreate: (input: {
     name: string
-    type: 'MEV' | 'Trading' | 'TradingV2' | 'Unknown'
+    type: 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'
     address: string
     ownerAddress: string
     ownerIndex?: number
@@ -577,7 +578,7 @@ function ContractCreate(props: {
   }) => Promise<void>
 }) {
   const [name, setName] = useState('')
-  const [type, setType] = useState<'MEV' | 'Trading' | 'TradingV2' | 'Unknown'>('Trading')
+  const [type, setType] = useState<'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'>('TradingV3')
   const [address, setAddress] = useState('')
   const [ownerIndex, setOwnerIndex] = useState<string>('')
   const [abiFile, setAbiFile] = useState('')
@@ -638,10 +639,10 @@ function ContractCreate(props: {
         className="input"
         value={type}
         disabled={props.disabled || props.creating}
-        onChange={(e) => setType(e.target.value as 'MEV' | 'Trading' | 'TradingV2' | 'Unknown')}
+        onChange={(e) => setType(e.target.value as 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown')}
       >
-        <option value="Trading">Trading</option>
         <option value="TradingV2">TradingV2</option>
+        <option value="TradingV3">TradingV3</option>
         <option value="MEV">MEV</option>
         <option value="Unknown">Unknown</option>
       </select>
@@ -774,7 +775,7 @@ function ContractCreate(props: {
             coldkey: ck ? ck : undefined
           })
           setName('')
-          setType('Trading')
+          setType('TradingV3')
           setAddress('')
           setOwnerIndex('')
           setAbiFile('')
@@ -806,7 +807,7 @@ function ContractDetail(props: {
   const [touchedWithdrawTo, setTouchedWithdrawTo] = useState(false)
 
   const [actionError, setActionError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState<'add' | 'remove' | 'withdraw' | null>(null)
+  const [submitting, setSubmitting] = useState<'add' | 'remove' | 'reset' | 'withdraw' | null>(null)
 
   const actionsDisabled = submitting !== null
 
@@ -824,7 +825,7 @@ function ContractDetail(props: {
     decimals: number
   }>(null)
   const [balancesError, setBalancesError] = useState<string | null>(null)
-  const [sorting, setSorting] = useState<{ key: 'netuid' | 'alpha' | 'tao'; dir: 'asc' | 'desc' }>({
+  const [sorting, setSorting] = useState<{ key: 'netuid' | 'alpha' | 'tao' | 'pool' | 'pct'; dir: 'asc' | 'desc' }>({
     key: 'tao',
     dir: 'desc'
   })
@@ -954,6 +955,28 @@ function ContractDetail(props: {
     copy.sort((a, b) => {
       if (sorting.key === 'netuid') {
         return (a.netuid - b.netuid) * dir
+      }
+
+      if (sorting.key === 'pool') {
+        const an = safeDecimalNumber(String(a.taoInPool ?? '').trim())
+        const bn = safeDecimalNumber(String(b.taoInPool ?? '').trim())
+        if (an !== null && bn !== null) return (an === bn ? 0 : an > bn ? 1 : -1) * dir
+        if (an !== null) return 1 * dir
+        if (bn !== null) return -1 * dir
+        return 0
+      }
+
+      if (sorting.key === 'pct') {
+        const asp = safeDecimalNumber(String(a.stakedPrice ?? '').trim())
+        const acp = safeDecimalNumber(String(a.currentPrice ?? '').trim())
+        const bsp = safeDecimalNumber(String(b.stakedPrice ?? '').trim())
+        const bcp = safeDecimalNumber(String(b.currentPrice ?? '').trim())
+        const ap = asp !== null && acp !== null && asp !== 0 ? ((acp - asp) / asp) * 100 : null
+        const bp = bsp !== null && bcp !== null && bsp !== 0 ? ((bcp - bsp) / bsp) * 100 : null
+        if (ap !== null && bp !== null) return (ap === bp ? 0 : ap > bp ? 1 : -1) * dir
+        if (ap !== null) return 1 * dir
+        if (bp !== null) return -1 * dir
+        return 0
       }
 
       const av = sorting.key === 'alpha' ? a.alphaAmount : a.taoAmount
@@ -1215,45 +1238,6 @@ function ContractDetail(props: {
             >
               {submitting === 'add' ? 'Submitting…' : 'Add stake'}
             </button>
-
-            <button
-              className="btn"
-              disabled={actionsDisabled}
-              onClick={async () => {
-                props.onError(null)
-                setActionError(null)
-                setTouchedAmount(false)
-                setTouchedWithdraw(false)
-                setTouchedWithdrawTo(false)
-                setTouchedNetuid(true)
-                if (netuidError) return
-                if (parsedNetuid === null) return
-
-                const netuidValue = parsedNetuid
-
-                const ok = await props.confirm({
-                  title: 'Submit remove stake',
-                  message: `netuid=${netuidValue}`,
-                  confirmText: 'Submit',
-                  cancelText: 'Cancel'
-                })
-                if (!ok) return
-
-                setSubmitting('remove')
-                try {
-                  const resp = await removeStake(props.contract.id, { netuid: netuidValue })
-                  props.requestRefresh()
-                } catch (e: any) {
-                  const msg = e?.message || 'remove_stake_failed'
-                  props.onError(msg)
-                  setActionError(msg)
-                } finally {
-                  setSubmitting(null)
-                }
-              }}
-            >
-              {submitting === 'remove' ? 'Submitting…' : 'Remove stake'}
-            </button>
           </div>
 
           <div className="spacer16" />
@@ -1491,7 +1475,7 @@ function ContractDetail(props: {
                             )
                           }
                         >
-                          Alpha Amount{sorting.key === 'alpha' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                          Alpha{sorting.key === 'alpha' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </button>
                       </th>
                       <th style={{ textAlign: 'right' }}>
@@ -1505,12 +1489,39 @@ function ContractDetail(props: {
                             )
                           }
                         >
-                          Tao Amount{sorting.key === 'tao' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                          Tao{sorting.key === 'tao' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </button>
                       </th>
                       <th style={{ textAlign: 'right' }}>Staked Price</th>
                       <th style={{ textAlign: 'right' }}>Current Price</th>
-                      <th style={{ textAlign: 'right' }}>% Change</th>
+                      <th style={{ textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          className="tableHeaderBtn"
+                          disabled={actionsDisabled}
+                          onClick={() =>
+                            setSorting((s) =>
+                              s.key === 'pool' ? { key: 'pool', dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: 'pool', dir: 'desc' }
+                            )
+                          }
+                        >
+                          Pool{sorting.key === 'pool' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </button>
+                      </th>
+                      <th style={{ textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          className="tableHeaderBtn"
+                          disabled={actionsDisabled}
+                          onClick={() =>
+                            setSorting((s) =>
+                              s.key === 'pct' ? { key: 'pct', dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: 'pct', dir: 'desc' }
+                            )
+                          }
+                        >
+                          % Change{sorting.key === 'pct' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </button>
+                      </th>
                       <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
                   </thead>
@@ -1539,9 +1550,48 @@ function ContractDetail(props: {
                             {s.currentPrice ?? '-'}
                           </td>
                           <td className="mono" style={{ textAlign: 'right' }}>
+                            {s.taoInPool ?? '-'}
+                          </td>
+                          <td className="mono" style={{ textAlign: 'right' }}>
                             {pctChange === null ? '-' : `${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%`}
                           </td>
                           <td style={{ textAlign: 'right' }}>
+                            <button
+                              type="button"
+                              className="btn btnTiny"
+                              style={{ marginRight: 8 }}
+                              disabled={actionsDisabled}
+                              onClick={async (e) => {
+                                e.preventDefault()
+                                props.onError(null)
+                                setActionError(null)
+
+                                const netuidValue = s.netuid
+
+                                const ok = await props.confirm({
+                                  title: 'Submit reset stake',
+                                  message: `netuid=${netuidValue}`,
+                                  confirmText: 'Submit',
+                                  cancelText: 'Cancel',
+                                  danger: true
+                                })
+                                if (!ok) return
+
+                                setSubmitting('reset')
+                                try {
+                                  await resetStake(props.contract.id, { netuid: netuidValue })
+                                  props.requestRefresh()
+                                } catch (err: any) {
+                                  const msg = err?.message || 'reset_stake_failed'
+                                  props.onError(msg)
+                                  setActionError(msg)
+                                } finally {
+                                  setSubmitting(null)
+                                }
+                              }}
+                            >
+                              {submitting === 'reset' ? 'Submitting…' : 'Reset'}
+                            </button>
                             <button
                               type="button"
                               className="btn btnDanger btnTiny"

@@ -6,7 +6,7 @@
   "function emergencyWithdrawTao(address to, uint256 amount)",
   "function balance() view returns (uint256)",
   "function getInfo() external view returns (uint256[129] memory prices, uint64[129] memory taoInPool, bool[129] memory staked, uint256[129] memory stakedPrices)",
-  "function getInfoV2() external view returns (uint256[129] memory prices, uint64[129] memory taoInPool, bool[129] memory stakedv1, bool[129] memory stakedv2, uint256[129] memory stakedPricesv1, uint256[129] memory stakedPricesv2)",
+  "function getInfoV3() external view returns (uint256[129] memory prices, uint64[129] memory taoInPool, bool[129] memory stakedv2, bool[129] memory stakedv3, uint256[129] memory stakedPricesv2, uint256[129] memory stakedPricesv3)",
   "function getStakedPrices() external view returns (uint256[129] memory)",
   "function getStakedAmount(bytes32 validatorColdkey) external view returns (uint256[129] memory amount)",
   "function reset(uint256 alphaNetuid)"
