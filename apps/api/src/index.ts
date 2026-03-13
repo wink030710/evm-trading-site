@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { createAuthRouter } from './routes/auth.js'
 import { createContractsRouter } from './routes/contracts.js'
+import { createLogsRouter } from './routes/logs.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -39,6 +40,7 @@ app.get('/health', (_req: Request, res: Response) => {
 
 app.use('/auth', createAuthRouter())
 app.use('/contracts', createContractsRouter())
+app.use('/logs', createLogsRouter())
 
 app.listen(env.PORT, () => {
   console.log(`API listening on :${env.PORT}`)

@@ -5,7 +5,7 @@ export type ApiError = {
 export type ContractRecord = {
   id: string
   name: string
-  type: 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'
+  type: 'MEV' | 'TradingV3' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -72,7 +72,7 @@ export async function listAbiFiles() {
 
 export async function createContract(input: {
   name: string
-  type: 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'
+  type: 'MEV' | 'TradingV3' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -95,8 +95,20 @@ export type TxResponse = {
   status: number | null
 }
 
-export async function addStake(id: string, input: { netuid: number; amount: string }) {
-  return request<TxResponse>(`/contracts/${id}/add-stake`, {
+export type BatchTxResult = {
+  netuid: number
+  hash: string | null
+  blockNumber: number | null
+  status: number | null
+  error?: string
+}
+
+export type BatchTxResponse = {
+  results: BatchTxResult[]
+}
+
+export async function addStake(id: string, input: { amount: string; netuid?: number; netuids?: number[] }) {
+  return request<TxResponse | BatchTxResponse>(`/contracts/${id}/add-stake`, {
     method: 'POST',
     body: JSON.stringify(input)
   })
@@ -146,4 +158,76 @@ export type BalancesResponse = {
 
 export async function getBalances(id: string) {
   return request<BalancesResponse>(`/contracts/${id}/balances`)
+}
+
+export type LogsConfigResponse = {
+  path: string
+  available: boolean
+}
+
+export async function getLogsConfig() {
+  return request<LogsConfigResponse>('/logs/config')
+}
+
+export async function flushLogsServer() {
+  return request<{ ok: boolean; message?: string }>('/logs/flush', {
+    method: 'POST'
+  })
+}
+
+export async function stopLogsServer() {
+  return request<{ ok: boolean; message?: string }>('/logs/stop', {
+    method: 'POST'
+  })
+}
+
+export async function restartLogsServer() {
+  return request<{ ok: boolean; message?: string }>('/logs/restart', {
+    method: 'POST'
+  })
+}
+
+/** Open a streaming connection to the logs endpoint. Caller must pass token. Returns an AbortController to disconnect. */
+export function openLogsStream(onLine: (line: string) => void, onError: (err: string) => void): AbortController {
+  const token = getToken()
+  const ac = new AbortController()
+  const url = `${apiUrl}/logs/stream`
+  fetch(url, {
+    signal: ac.signal,
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        onError((data as { message?: string }).message || `HTTP ${res.status}`)
+        return
+      }
+      const reader = res.body?.getReader()
+      if (!reader) {
+        onError('No response body')
+        return
+      }
+      const dec = new TextDecoder()
+      let buf = ''
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += dec.decode(value, { stream: true })
+          const parts = buf.split('\n\n')
+          buf = parts.pop() ?? ''
+          for (const part of parts) {
+            const match = part.match(/^data:\s*(.*)/m)
+            if (match) {
+              const line = match[1].replace(/\\n/g, '\n').trim()
+              if (line) onLine(line)
+            }
+          }
+        }
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') onError(e?.message || 'Stream error')
+      }
+    })
+    .catch((e: any) => onError(e?.message || 'Connection failed'))
+  return ac
 }

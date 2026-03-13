@@ -1,16 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addStake,
   clearToken,
   createContract,
   deleteContract,
   getBalances,
+  flushLogsServer,
+  getLogsConfig,
   listAbiFiles,
   listContracts,
   listOwners,
   listStakes,
   login,
+  openLogsStream,
   removeStake,
+  restartLogsServer,
+  stopLogsServer,
   resetStake,
   setToken,
   withdraw,
@@ -21,6 +26,7 @@ import {
 export function App() {
   const [tokenPresent, setTokenPresent] = useState(() => Boolean(localStorage.getItem('token')))
   const [error, setError] = useState<string | null>(null)
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
 
   useEffect(() => {
     const onStorage = () => setTokenPresent(Boolean(localStorage.getItem('token')))
@@ -30,29 +36,43 @@ export function App() {
 
   return (
     <div className="container">
-      <div className="row" style={{ justifyContent: 'space-between' }}>
+      <header className="appHeader">
         <div>
           <h1 className="h1">EVM Staking Admin</h1>
-          <div className="muted" style={{ fontSize: 13 }}>
+          <div className="muted appHeaderApi">
             {import.meta.env.VITE_API_URL || 'http://localhost:4000'}
           </div>
         </div>
         {tokenPresent ? (
           <button
-            className="btn"
-            onClick={() => {
-              clearToken()
-              setTokenPresent(false)
-            }}
+            className="btn btnSmall"
+            onClick={() => setLogoutConfirmOpen(true)}
           >
             Logout
           </button>
         ) : null}
-      </div>
+      </header>
+
+      {logoutConfirmOpen ? (
+        <ConfirmDialog
+          title="Log out"
+          message="Are you sure you want to log out?"
+          confirmText="Log out"
+          cancelText="Cancel"
+          danger
+          onClose={(confirmed) => {
+            setLogoutConfirmOpen(false)
+            if (confirmed) {
+              clearToken()
+              setTokenPresent(false)
+            }
+          }}
+        />
+      ) : null}
       <div className="spacer16" />
 
       {error ? (
-        <div className="card" style={{ borderColor: '#6a1d33' }}>
+        <div className="card cardError">
           <div className="muted">Error</div>
           <div>{error}</div>
         </div>
@@ -83,54 +103,312 @@ function Login(props: { onLoggedIn: () => void; onError: (e: string | null) => v
   const [loading, setLoading] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    props.onError(null)
+    setLocalError(null)
+    const u = username.trim()
+    const p = password
+    if (!u || !p) {
+      setLocalError('username and password are required')
+      return
+    }
+    setLoading(true)
+    try {
+      const resp = await login(u, p)
+      setToken(resp.token)
+      props.onLoggedIn()
+    } catch (err: any) {
+      props.onError(err?.message || 'login_failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="card loginCard">
-      <div className="muted">Login</div>
-      <div className="spacer12" />
-
-      <div className="label">Username</div>
-      <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} />
-
-      <div className="spacer12" />
-      <div className="label">Password</div>
-      <input
-        className="input"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-
-      {localError ? <div className="errorText">{localError}</div> : null}
-
+      <h2 className="loginTitle">Sign in</h2>
+      <div className="muted loginSubtitle">Enter your admin credentials</div>
       <div className="spacer16" />
-      <button
-        className="btn btnPrimary"
-        disabled={loading}
-        onClick={async () => {
-          props.onError(null)
-          setLocalError(null)
-          const u = username.trim()
-          const p = password
-          if (!u || !p) {
-            setLocalError('username and password are required')
-            return
-          }
-          setLoading(true)
-          try {
-            const resp = await login(u, p)
-            setToken(resp.token)
-            props.onLoggedIn()
-          } catch (e: any) {
-            props.onError(e?.message || 'login_failed')
-          } finally {
-            setLoading(false)
-          }
-        }}
-      >
-        {loading ? 'Signing in…' : 'Sign in'}
-      </button>
+
+      <form onSubmit={handleSubmit}>
+        <div className="label">Username</div>
+        <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+
+        <div className="spacer12" />
+        <div className="label">Password</div>
+        <input
+          className="input"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password"
+        />
+
+        {localError ? <div className="errorText">{localError}</div> : null}
+
+        <div className="spacer16" />
+        <button type="submit" className="btn btnPrimary" disabled={loading}>
+          {loading ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
     </div>
   )
+}
+
+function LogsView(props: {
+  onError: (e: string | null) => void
+  confirm: (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>
+}) {
+  const [lines, setLines] = useState<string[]>([])
+  const [config, setConfig] = useState<{ path: string; available: boolean } | null>(null)
+  const [configError, setConfigError] = useState<string | null>(null)
+  const [streamError, setStreamError] = useState<string | null>(null)
+  const [clearing, setClearing] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [restartError, setRestartError] = useState<string | null>(null)
+  const [stopError, setStopError] = useState<string | null>(null)
+  const [clearError, setClearError] = useState<string | null>(null)
+  const streamRef = useRef<AbortController | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getLogsConfig()
+      .then((c) => {
+        if (!cancelled) {
+          setConfig(c)
+          setConfigError(null)
+        }
+      })
+      .catch((e: any) => {
+        if (!cancelled) {
+          setConfig(null)
+          setConfigError(e?.message || 'Failed to load logs config')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (configError || !config?.available) return
+    setLines([])
+    setStreamError(null)
+    streamRef.current = openLogsStream(
+      (line) => setLines((prev) => [...prev.slice(-1999), line]),
+      (err) => setStreamError(err)
+    )
+    return () => {
+      streamRef.current?.abort()
+      streamRef.current = null
+    }
+  }, [config?.path, config?.available, configError])
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight)
+  }, [lines])
+
+  if (configError) {
+    return (
+      <div className="card" style={{ padding: 20 }}>
+        <div className="muted">Logs not available</div>
+        <div className="errorText" style={{ marginTop: 8 }}>{configError}</div>
+        <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+          Set LOG_FILE_PATH on the server or run the API under PM2.
+        </div>
+      </div>
+    )
+  }
+
+  const handleClear = async () => {
+    setClearError(null)
+    setClearing(true)
+    try {
+      await flushLogsServer()
+      setLines([])
+    } catch (e: any) {
+      setClearError(e?.message || 'Clear (pm2 flush) failed')
+    } finally {
+      setClearing(false)
+    }
+  }
+
+  const handleRestart = async () => {
+    const ok = await props.confirm({
+      title: 'Restart server',
+      message: 'Restart the PM2 process? The log stream may disconnect.',
+      confirmText: 'Restart',
+      cancelText: 'Cancel',
+      danger: true
+    })
+    if (!ok) return
+    setRestartError(null)
+    setRestarting(true)
+    try {
+      await restartLogsServer()
+    } catch (e: any) {
+      setRestartError(e?.message || 'Restart failed')
+    } finally {
+      setRestarting(false)
+    }
+  }
+
+  const handleStop = async () => {
+    const ok = await props.confirm({
+      title: 'Stop server',
+      message: 'Stop the PM2 process? You will need to start it again manually.',
+      confirmText: 'Stop',
+      cancelText: 'Cancel',
+      danger: true
+    })
+    if (!ok) return
+    setStopError(null)
+    setStopping(true)
+    try {
+      await stopLogsServer()
+    } catch (e: any) {
+      setStopError(e?.message || 'Stop failed')
+    } finally {
+      setStopping(false)
+    }
+  }
+
+  return (
+    <div>
+      <div className="rowWrap" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div>
+          {config ? (
+            <div className="muted" style={{ fontSize: 13 }}>
+              Streaming: {config.path}
+            </div>
+          ) : null}
+          {streamError ? (
+            <div className="errorText" style={{ marginTop: 4 }}>{streamError}</div>
+          ) : null}
+          {restartError ? (
+            <div className="errorText" style={{ marginTop: 4 }}>{restartError}</div>
+          ) : null}
+          {stopError ? (
+            <div className="errorText" style={{ marginTop: 4 }}>{stopError}</div>
+          ) : null}
+          {clearError ? (
+            <div className="errorText" style={{ marginTop: 4 }}>{clearError}</div>
+          ) : null}
+        </div>
+        <div className="rowWrap" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className="btn btnSmall"
+            onClick={handleClear}
+            disabled={clearing}
+          >
+            {clearing ? 'Clearing…' : 'Clear'}
+          </button>
+          <button
+            type="button"
+            className="btn btnSmall btnDanger"
+            onClick={handleStop}
+            disabled={stopping || restarting}
+          >
+            {stopping ? 'Stopping…' : 'Stop'}
+          </button>
+          <button
+            type="button"
+            className="btn btnSmall btnPrimary"
+            onClick={handleRestart}
+            disabled={restarting || stopping}
+          >
+            {restarting ? 'Restarting…' : 'Restart'}
+          </button>
+        </div>
+      </div>
+      <div
+        ref={scrollRef}
+        className="logsStream logsStreamContainer mono"
+      >
+        {lines.length === 0 && !streamError ? (
+          <div className="logsStreamLine">Connecting…</div>
+        ) : (
+          lines.map((line, i) => {
+            const isPlus =
+              line.startsWith('Balance changed: +') || line.startsWith('Staking... [')
+            const isMinus = line.startsWith('Balance changed: -')
+            const lineClass = isPlus
+              ? 'logsStreamLinePlus'
+              : isMinus
+                ? 'logsStreamLineMinus'
+                : 'logsStreamLine'
+            return (
+              <div key={i} className={lineClass}>
+                {isPlus && (
+                  <span className="logsStreamIcon" title="Positive" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                      <line x1="9" y1="9" x2="9.01" y2="9" />
+                      <line x1="15" y1="9" x2="15.01" y2="9" />
+                    </svg>
+                  </span>
+                )}
+                {isMinus && (
+                  <>
+                    <span className="logsStreamIcon logsStreamIconSad" title="Balance decreased" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M16 16s-1.5-2-4-2-4 2-4 2" />
+                        <line x1="9" y1="9" x2="9.01" y2="9" />
+                        <line x1="15" y1="9" x2="15.01" y2="9" />
+                      </svg>
+                    </span>
+                    <span className="logsStreamIcon logsStreamIconWarning" title="Warning" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                      </svg>
+                    </span>
+                  </>
+                )}
+                <span className="logsStreamText">{renderHighlightedLogText(line)}</span>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+}
+
+function renderHighlightedLogText(line: string): React.ReactNode {
+  const patterns = ['Mev have staked', 'Staked: True']
+  let remaining = line
+  const segments: React.ReactNode[] = []
+  let key = 0
+
+  while (remaining.length > 0) {
+    const found = patterns
+      .map((p) => ({ p, idx: remaining.indexOf(p) }))
+      .filter((r) => r.idx !== -1)
+    if (found.length === 0) {
+      segments.push(<span key={key++}>{remaining}</span>)
+      break
+    }
+    const next = found.reduce((min, cur) => (cur.idx < min.idx ? cur : min))
+    if (next.idx > 0) {
+      segments.push(<span key={key++}>{remaining.slice(0, next.idx)}</span>)
+    }
+    segments.push(
+      <span key={key++} className="logsHighlightGood">
+        {next.p}
+      </span>
+    )
+    remaining = remaining.slice(next.idx + next.p.length)
+  }
+
+  return segments
 }
 
 function Authed(props: { onError: (e: string | null) => void }) {
@@ -140,6 +418,39 @@ function Authed(props: { onError: (e: string | null) => void }) {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const [copied, setCopied] = useState<null | 'contract_address' | 'owner_address'>(null)
+  const copyTimerRef = useRef<number | null>(null)
+
+  const copyToClipboard = useCallback(async (text: string) => {
+    const t = String(text)
+    if (!t) return false
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(t)
+        return true
+      }
+    } catch {
+      // fall through
+    }
+
+    try {
+      const el = document.createElement('textarea')
+      el.value = t
+      el.setAttribute('readonly', 'true')
+      el.style.position = 'fixed'
+      el.style.left = '-9999px'
+      el.style.top = '0'
+      document.body.appendChild(el)
+      el.focus()
+      el.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(el)
+      return ok
+    } catch {
+      return false
+    }
+  }, [])
 
   const [globalBusy, setGlobalBusy] = useState(false)
 
@@ -159,6 +470,8 @@ function Authed(props: { onError: (e: string | null) => void }) {
     decimals: number
   }>(null)
   const [selectedBalancesError, setSelectedBalancesError] = useState<string | null>(null)
+
+  const [activeView, setActiveView] = useState<'contracts' | 'logs'>('contracts')
 
   const [confirmState, setConfirmState] = useState<null | {
     title: string
@@ -269,60 +582,146 @@ function Authed(props: { onError: (e: string | null) => void }) {
       <div className="card">
         <div className="cardHeader">
           <div>
-            {selected ? (
-              <div
-                className="mono truncate"
-                style={{
-                  fontSize: 16,
-                  fontWeight: 700,
-                  color: '#e8eefc',
-                  padding: '6px 10px',
-                  borderRadius: 10,
-                  border: '1px solid #2b60ff',
-                  background: 'rgba(43, 96, 255, 0.10)',
-                  maxWidth: 720
-                }}
-                title={selected.address}
-              >
-                {selected.name} ({selected.type}): {shortAddress(selected.address)}
+            {activeView === 'logs' ? (
+              <div className="rowWrap" style={{ gap: 8, alignItems: 'center' }}>
+                <span className="h1" style={{ margin: 0 }}>PM2 Logs</span>
+              </div>
+            ) : selected ? (
+              <div className="cardHeaderAddresses" style={{ maxWidth: 820 }}>
+                <div className="mono truncate contractBadge" title={selected.address}>
+                  {selected.name} ({selected.type})
+                </div>
+                <div className="cardHeaderAddressRow">
+                  <span className="cardHeaderAddressLabel">Contract</span>
+                  <span className="cardHeaderAddressValue truncate" title={selected.address}>
+                    {shortAddress(selected.address)}
+                  </span>
+                  <button
+                    type="button"
+                    className="cardHeaderCopyBtn"
+                    disabled={globalBusy}
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      try {
+                        const ok = await copyToClipboard(selected.address)
+                        if (!ok) throw new Error('failed_to_copy')
+                        setCopied('contract_address')
+                        if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+                        copyTimerRef.current = window.setTimeout(() => {
+                          setCopied(null)
+                          copyTimerRef.current = null
+                        }, 1200)
+                      } catch {
+                        props.onError('failed_to_copy')
+                      }
+                    }}
+                    aria-label="Copy contract address"
+                    title="Copy contract address"
+                  >
+                    {copied === 'contract_address' ? (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                <div className="cardHeaderAddressRow">
+                  <span className="cardHeaderAddressLabel">
+                    {typeof selected.ownerIndex === 'number' ? `Owner #${selected.ownerIndex}` : 'Owner'}
+                  </span>
+                  <span className="cardHeaderAddressValue truncate" title={selected.ownerAddress}>
+                    {shortAddress(selected.ownerAddress)}
+                  </span>
+                  <button
+                    type="button"
+                    className="cardHeaderCopyBtn"
+                    disabled={globalBusy}
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      try {
+                        const ok = await copyToClipboard(selected.ownerAddress)
+                        if (!ok) throw new Error('failed_to_copy')
+                        setCopied('owner_address')
+                        if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+                        copyTimerRef.current = window.setTimeout(() => {
+                          setCopied(null)
+                          copyTimerRef.current = null
+                        }, 1200)
+                      } catch {
+                        props.onError('failed_to_copy')
+                      }
+                    }}
+                    aria-label="Copy owner address"
+                    title="Copy owner address"
+                  >
+                    {copied === 'owner_address' ? (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
             ) : null}
           </div>
 
           <div className="rowWrap" style={{ gap: 8, justifyContent: 'flex-end' }}>
-            <div className="row" style={{ gap: 8 }}>
-              <div className="muted">Total</div>
-              <div className="badge">{contracts.length}</div>
-            </div>
-            <button
-              className="btn"
-              disabled={globalBusy || contracts.length === 0}
-              onClick={() => {
-                setSelectQuery('')
-                setSelectModalOpen(true)
-              }}
-            >
-              Select
-            </button>
-            <button
-              className="btn btnPrimary"
-              disabled={globalBusy}
-              onClick={() => {
-                setCreateError(null)
-                setAddModalOpen(true)
-              }}
-            >
-              Add
-            </button>
-            <button className="btn" disabled={loading || globalBusy} onClick={refreshAll}>
-              {loading ? 'Refreshing…' : 'Refresh'}
-            </button>
+            {activeView === 'logs' ? (
+              <button className="btn" onClick={() => setActiveView('contracts')}>
+                Contracts
+              </button>
+            ) : (
+              <>
+                <div className="row" style={{ gap: 8 }}>
+                  <div className="muted">Total</div>
+                  <div className="badge">{contracts.length}</div>
+                </div>
+                <button
+                  className="btn"
+                  disabled={globalBusy || contracts.length === 0}
+                  onClick={() => {
+                    setSelectQuery('')
+                    setSelectModalOpen(true)
+                  }}
+                >
+                  Select
+                </button>
+                <button
+                  className="btn btnPrimary"
+                  disabled={globalBusy}
+                  onClick={() => {
+                    setCreateError(null)
+                    setAddModalOpen(true)
+                  }}
+                >
+                  Add
+                </button>
+                <button className="btn" disabled={loading || globalBusy} onClick={refreshAll}>
+                  {loading ? 'Refreshing…' : 'Refresh'}
+                </button>
+                <button className="btn btnSmall" onClick={() => setActiveView('logs')}>
+                  Logs
+                </button>
+              </>
+            )}
           </div>
         </div>
 
         <div className="spacer16" />
 
-      {selected ? (
+      {activeView === 'logs' ? (
+        <LogsView onError={props.onError} confirm={confirm} />
+      ) : selected ? (
         <ContractDetail
           contract={selected}
           refreshNonce={detailRefreshNonce}
@@ -370,7 +769,7 @@ function Authed(props: { onError: (e: string | null) => void }) {
             confirm={confirm}
             onCreate={async (input: {
               name: string
-              type: 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'
+              type: 'MEV' | 'TradingV3' | 'Unknown'
               address: string
               ownerAddress: string
               ownerIndex?: number
@@ -446,16 +845,38 @@ function Authed(props: { onError: (e: string | null) => void }) {
                   }}
                 >
                   <div className="listItemMain">
-                    <div className="truncate" title={(c as any).name} style={{ fontSize: 13, fontWeight: 700 }}>
-                      {(c as any).name}
+                    <div className="listItemAvatar" aria-hidden="true">
+                      {listItemInitial((c as ContractRecord).name)}
                     </div>
-                    <div className="mono truncate" title={c.address} style={{ fontSize: 13 }}>
-                      {shortAddress(c.address)}
-                    </div>
-                    <div className="muted" style={{ fontSize: 13 }}>{(c as any).type}</div>
-                    <div className="muted truncate" title={c.ownerAddress} style={{ fontSize: 13 }}>
-                      {typeof c.ownerIndex === 'number' ? `owner #${c.ownerIndex}: ` : 'owner: '}
-                      {shortAddress(c.ownerAddress)}
+                    <div className="listItemDetails">
+                      <div className="listItemName">
+                        <span className="truncate" title={(c as ContractRecord).name}>
+                          {(c as ContractRecord).name}
+                        </span>
+                        <span className="listItemTypeBadge">{(c as ContractRecord).type}</span>
+                      </div>
+                      <div className="listItemMeta">
+                        <div className="listItemMetaRow">
+                          <span className="listItemMetaLabel">Contract</span>
+                          <span className="mono truncate" title={c.address}>
+                            {shortAddress(c.address)}
+                          </span>
+                        </div>
+                        <div className="listItemMetaRow">
+                          <span className="listItemMetaLabel">
+                            {typeof c.ownerIndex === 'number' ? `Owner #${c.ownerIndex}` : 'Owner'}
+                          </span>
+                          <span className="mono truncate" title={c.ownerAddress}>
+                            {shortAddress(c.ownerAddress)}
+                          </span>
+                        </div>
+                        {(c as ContractRecord).createdAt ? (
+                          <div className="listItemMetaRow">
+                            <span className="listItemMetaLabel">Added</span>
+                            <span>{formatContractDate((c as ContractRecord).createdAt)}</span>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                   <div className="rowWrap listItemActions">
@@ -569,7 +990,7 @@ function ContractCreate(props: {
   confirm: (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>
   onCreate: (input: {
     name: string
-    type: 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'
+    type: 'MEV' | 'TradingV3' | 'Unknown'
     address: string
     ownerAddress: string
     ownerIndex?: number
@@ -578,11 +999,10 @@ function ContractCreate(props: {
   }) => Promise<void>
 }) {
   const [name, setName] = useState('')
-  const [type, setType] = useState<'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'>('TradingV3')
+  const [type, setType] = useState<'MEV' | 'TradingV3' | 'Unknown'>('TradingV3')
   const [address, setAddress] = useState('')
   const [ownerIndex, setOwnerIndex] = useState<string>('')
   const [abiFile, setAbiFile] = useState('')
-  const [coldkey, setColdkey] = useState('')
   const [abiFiles, setAbiFiles] = useState<string[] | null>(null)
   const [abiFilesError, setAbiFilesError] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -619,6 +1039,13 @@ function ContractCreate(props: {
     return props.owners.find((o) => o.index === idx) || null
   }, [ownerIndex, props.owners])
 
+  const selectableAbiFiles = useMemo(() => {
+    if (!abiFiles) return []
+    return abiFiles.filter(
+      (f) => f !== 'IStaking.json' && f !== 'IAlpha.json'
+    )
+  }, [abiFiles])
+
   return (
     <div>
       <div className="muted">Add contract</div>
@@ -639,9 +1066,8 @@ function ContractCreate(props: {
         className="input"
         value={type}
         disabled={props.disabled || props.creating}
-        onChange={(e) => setType(e.target.value as 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown')}
+        onChange={(e) => setType(e.target.value as 'MEV' | 'TradingV3' | 'Unknown')}
       >
-        <option value="TradingV2">TradingV2</option>
         <option value="TradingV3">TradingV3</option>
         <option value="MEV">MEV</option>
         <option value="Unknown">Unknown</option>
@@ -676,8 +1102,8 @@ function ContractCreate(props: {
       {props.ownersError ? <div className="errorText">{props.ownersError}</div> : null}
 
       <div className="spacer12" />
-      <div className="label">ABI file (optional)</div>
-      {abiFiles && abiFiles.length > 0 ? (
+      <div className="label">ABI file</div>
+      {selectableAbiFiles.length > 0 ? (
         <select
           className="input"
           value={abiFile}
@@ -687,7 +1113,7 @@ function ContractCreate(props: {
           <option value="" disabled>
             Select ABI file…
           </option>
-          {abiFiles.map((f) => (
+          {selectableAbiFiles.map((f) => (
             <option key={f} value={f}>
               {f}
             </option>
@@ -704,16 +1130,6 @@ function ContractCreate(props: {
       )}
 
       {abiFilesError ? <div className="errorText">{abiFilesError}</div> : null}
-
-      <div className="spacer12" />
-      <div className="label">Coldkey (optional)</div>
-      <input
-        className="input mono"
-        value={coldkey}
-        disabled={props.disabled || props.creating}
-        onChange={(e) => setColdkey(e.target.value)}
-        placeholder="0x… (bytes32)"
-      />
 
       {localError ? <div className="errorText">{localError}</div> : null}
       {props.error ? <div className="errorText">{props.error}</div> : null}
@@ -743,19 +1159,12 @@ function ContractCreate(props: {
             setLocalError('invalid owner address')
             return
           }
-          if (abiFiles && abiFiles.length > 0 && !abiFile.trim()) {
+          if (selectableAbiFiles.length > 0 && !abiFile.trim()) {
             setLocalError('ABI file is required')
             return
           }
 
-          const ck = coldkey.trim()
-          if (ck) {
-            const isBytes32 = (v: string) => /^0x[a-fA-F0-9]{64}$/.test(v)
-            if (!isBytes32(ck)) {
-              setLocalError('coldkey must be 0x… bytes32')
-              return
-            }
-          }
+          const coldkeyBytes32 = addressToBytes32(a)
 
           const ok = await props.confirm({
             title: 'Add contract',
@@ -772,14 +1181,13 @@ function ContractCreate(props: {
             ownerAddress: o,
             ownerIndex: selectedOwner?.index,
             abiFile: abiFile.trim() ? abiFile.trim() : undefined,
-            coldkey: ck ? ck : undefined
+            coldkey: coldkeyBytes32 || undefined
           })
           setName('')
           setType('TradingV3')
           setAddress('')
           setOwnerIndex('')
           setAbiFile('')
-          setColdkey('')
         }}
       >
         {props.creating ? 'Adding…' : 'Add'}
@@ -800,6 +1208,19 @@ function ContractDetail(props: {
   const [amount, setAmount] = useState('')
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [withdrawTo, setWithdrawTo] = useState('')
+
+  const parsedNetuids = useMemo(() => {
+    const raw = netuid.trim()
+    if (!raw) return [] as number[]
+    const parts = raw
+      .split(/,+/g)
+      .map((p) => p.trim())
+      .filter(Boolean)
+    const nums = parts
+      .map((p) => safeInt(p))
+      .filter((n): n is number => n !== null)
+    return Array.from(new Set(nums)).sort((a, b) => a - b)
+  }, [netuid])
 
   const [touchedNetuid, setTouchedNetuid] = useState(false)
   const [touchedAmount, setTouchedAmount] = useState(false)
@@ -877,7 +1298,7 @@ function ContractDetail(props: {
   }, [props.refreshNonce, refreshStakes, refreshBalances])
 
   const parsedNetuid = useMemo(() => safeInt(netuid), [netuid])
-  const netuidOk = parsedNetuid !== null
+  const netuidOk = parsedNetuids.length > 0
   const amountOk = useMemo(() => isLikelyDecimalAmount(amount), [amount])
   const withdrawOk = useMemo(() => isLikelyDecimalAmount(withdrawAmount), [withdrawAmount])
   const withdrawToValue = useMemo(() => {
@@ -921,9 +1342,15 @@ function ContractDetail(props: {
   const netuidError = useMemo(() => {
     const v = netuid.trim()
     if (!v) return 'netuid is required'
-    if (parsedNetuid === null) return 'netuid must be a non-negative integer'
+    const invalid = v
+      .split(/,+/g)
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .some((p) => safeInt(p) === null)
+    if (invalid) return 'netuid must be a non-negative integer (or a comma-separated list like 1,2,3)'
+    if (parsedNetuids.length === 0) return 'netuid is required'
     return null
-  }, [netuid, parsedNetuid])
+  }, [netuid, parsedNetuids.length])
 
   const amountError = useMemo(() => {
     const v = amount.trim()
@@ -1142,7 +1569,7 @@ function ContractDetail(props: {
                   setTouchedNetuid(true)
                   setNetuid(e.target.value)
                 }}
-                placeholder="e.g. 1"
+                placeholder="e.g. 1 or 1,2,3"
               />
               <div className="fieldErrorSlot">
                 {touchedNetuid && netuidError ? <div className="errorText">{netuidError}</div> : null}
@@ -1184,9 +1611,9 @@ function ContractDetail(props: {
                 setTouchedNetuid(true)
                 setTouchedAmount(true)
                 if (netuidError || amountError) return
-                if (parsedNetuid === null) return
+                if (parsedNetuids.length === 0) return
 
-                const netuidValue = parsedNetuid
+                const netuidsValue = parsedNetuids
 
                 let nextBalances = balances
                 if (!nextBalances) {
@@ -1206,7 +1633,7 @@ function ContractDetail(props: {
                 if (nextBalances) {
                   const contractWei = safeBigIntString(nextBalances.contractBalanceWei)
                   const units = parseDecimalToUnits(normalizeDecimal(amount), nextBalances.decimals)
-                  if (contractWei !== null && units !== null && units > contractWei) {
+                  if (contractWei !== null && units !== null && units * BigInt(netuidsValue.length) > contractWei) {
                     setTouchedAmount(true)
                     return
                   }
@@ -1214,7 +1641,7 @@ function ContractDetail(props: {
 
                 const ok = await props.confirm({
                   title: 'Submit add stake',
-                  message: `netuid=${netuidValue}\namount=${normalizeDecimal(amount)}`,
+                  message: `netuids=${netuidsValue.join(',')}\namount=${normalizeDecimal(amount)}`,
                   confirmText: 'Submit',
                   cancelText: 'Cancel'
                 })
@@ -1223,7 +1650,7 @@ function ContractDetail(props: {
                 setSubmitting('add')
                 try {
                   const resp = await addStake(props.contract.id, {
-                    netuid: netuidValue,
+                    netuids: netuidsValue,
                     amount: normalizeDecimal(amount)
                   })
                   props.requestRefresh()
@@ -1647,6 +2074,13 @@ function isLikelyAddress(value: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(v)
 }
 
+/** Convert 20-byte contract address to bytes32 (left-pad with zeros). */
+function addressToBytes32(address: string): string {
+  const v = address.trim().replace(/^0x/i, '')
+  if (v.length !== 40 || !/^[a-fA-F0-9]{40}$/.test(v)) return ''
+  return '0x' + v.padStart(64, '0').toLowerCase()
+}
+
 function safeInt(value: string): number | null {
   const v = value.trim()
   if (!v) return null
@@ -1661,6 +2095,23 @@ function shortAddress(address: string) {
   const a = address.trim()
   if (!/^0x[a-fA-F0-9]{40}$/.test(a)) return a
   return `${a.slice(0, 6)}...${a.slice(-4)}`
+}
+
+function formatContractDate(iso: string | undefined): string {
+  if (!iso) return '—'
+  try {
+    const d = new Date(iso)
+    if (!Number.isFinite(d.getTime())) return '—'
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  } catch {
+    return '—'
+  }
+}
+
+function listItemInitial(name: string): string {
+  const n = (name || '').trim()
+  if (!n) return '?'
+  return n[0]!.toUpperCase()
 }
 
 function isLikelyDecimalAmount(value: string) {
@@ -1705,7 +2156,7 @@ function ConfirmDialog(props: {
   const cancelText = props.cancelText || 'Cancel'
   return (
     <div
-      className="modalOverlay"
+      className="modalOverlay modalOverlayConfirm"
       role="dialog"
       aria-modal="true"
       aria-label={props.title}

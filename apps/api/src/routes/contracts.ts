@@ -17,7 +17,7 @@ import { type ContractRecord, getDb, newId } from "../services/storage.js";
 const contractCreateSchema = z
   .object({
     name: z.string().min(1),
-    type: z.enum(["MEV", "TradingV2", "TradingV3", "Unknown"]),
+    type: z.enum(["MEV", "TradingV3", "Unknown"]),
     address: z.string().min(1),
     ownerAddress: z.string().min(1).optional(),
     ownerIndex: z.coerce.number().int().nonnegative().optional(),
@@ -33,10 +33,15 @@ const contractCreateSchema = z
     },
   );
 
-const addStakeSchema = z.object({
-  netuid: z.coerce.number().int().nonnegative(),
-  amount: z.string().min(1),
-});
+const addStakeSchema = z
+  .object({
+    amount: z.string().min(1),
+    netuid: z.coerce.number().int().nonnegative().optional(),
+    netuids: z.array(z.coerce.number().int().nonnegative()).optional(),
+  })
+  .refine((v) => typeof v.netuid === "number" || (Array.isArray(v.netuids) && v.netuids.length > 0), {
+    message: "netuid_required",
+  });
 
 const removeStakeSchema = z.object({
   netuid: z.coerce.number().int().nonnegative(),
@@ -172,7 +177,7 @@ export function createContractsRouter() {
       if (t === "Trading") {
         (c as any).type = "TradingV3";
         changed = true;
-      } else if (t !== "MEV" && t !== "TradingV2" && t !== "TradingV3" && t !== "Unknown") {
+      } else if (t !== "MEV" && t !== "TradingV3" && t !== "Unknown") {
         (c as any).type = "TradingV3";
         changed = true;
       }
@@ -344,6 +349,20 @@ export function createContractsRouter() {
       return res.status(400).json({ error: "invalid_request" });
     }
 
+    const requestedNetuids = Array.isArray(body.data.netuids)
+      ? body.data.netuids
+      : typeof body.data.netuid === "number"
+        ? [body.data.netuid]
+        : [];
+
+    const netuids = Array.from(
+      new Set(requestedNetuids.filter((n) => Number.isInteger(n) && n >= 0)),
+    ).sort((a, b) => a - b);
+
+    if (netuids.length === 0) {
+      return res.status(400).json({ error: "netuid_required" });
+    }
+
     const db = await getDb();
     await db.read();
     const record = db.data.contracts.find((c: ContractRecord) => c.id === id);
@@ -364,7 +383,8 @@ export function createContractsRouter() {
 
       const provider = await getProvider();
       const contractBal = await provider.getBalance(record.address);
-      if (amountUnits > contractBal) {
+      const totalRequired = amountUnits * BigInt(netuids.length);
+      if (totalRequired > contractBal) {
         return res.status(400).json({
           error: "insufficient_contract_balance",
           contractBalanceWei: contractBal.toString(),
@@ -379,7 +399,7 @@ export function createContractsRouter() {
               record.ownerIndex,
             )
           : await getContract(record.address, abiFile, record.ownerAddress);
-      const tx = await contract.add_stake(amountUnits, body.data.netuid);
+      const tx = await contract.add_stakes(amountUnits, netuids);
       const receipt = await tx.wait();
       return res.json({
         hash: tx.hash,
@@ -549,7 +569,6 @@ export function createContractsRouter() {
 
   router.get("/:id/stakes", async (req: Request, res: Response) => {
     const id = req.params.id;
-    const config = await getConfig();
     const db = await getDb();
     await db.read();
     const record = db.data.contracts.find((c: ContractRecord) => c.id === id);
@@ -561,14 +580,6 @@ export function createContractsRouter() {
       return res.status(400).json({ error: "coldkey_required" });
     }
 
-    let stakingAbiFile: string;
-    try {
-      stakingAbiFile = await resolveAbiFile(config.contracts.stakingAbiFile);
-    } catch (e: any) {
-      return res
-        .status(500)
-        .json({ error: e?.message || "abi_resolve_failed" });
-    }
     let abiFile: string;
     try {
       abiFile = await resolveAbiFile(record.abiFile);
@@ -578,10 +589,6 @@ export function createContractsRouter() {
         .json({ error: e?.message || "abi_resolve_failed" });
     }
     try {
-      const stakingContract = await getReadOnlyContract(
-        config.contracts.stakingAddress,
-        stakingAbiFile,
-      );
       const stakes: {
         netuid: number;
         stakedPrice: string;
@@ -598,34 +605,18 @@ export function createContractsRouter() {
               record.ownerIndex,
             )
           : await getContract(record.address, abiFile, record.ownerAddress);
-      if (record.type === "TradingV2") {
-        const [prices, taoInPool, staked1, staked2, stakedPrices1, stakedPrices2] = await contract.getInfoV2();
-        const stakedAmounts1 = await contract.getStakedAmount("0x194b5e98c2becf35e7544a332c34fce386b7ea4c661e57d79c7b4f2083e514dd");
-        const stakedAmounts2 = await contract.getStakedAmount(record.coldkey);
+      if (record.type === "TradingV3") {
+        const [prices, taoInPool, staked, stakedPrices] = await contract.getInfo();
+        const stakedAmounts = await contract.getStakedAmount(record.coldkey);
         for (let i = 0; i < 129; i++) {
-          if (!staked1[i] && !staked2[i]) continue;
+          if (!staked[i]) continue;
           stakes.push({
             netuid: i,
-            taoAmount: (Number((staked1[i] ? stakedAmounts1[i] : stakedAmounts2[i]) * prices[i]) / 1e27).toFixed(5),
-            stakedPrice: (Number(staked1[i] ? stakedPrices1[i] : stakedPrices2[i]) / 1e18).toFixed(5),
+            taoAmount: ((Number(stakedAmounts[i]) * Number(prices[i])) / 1e27).toFixed(5),
+            stakedPrice: (Number(stakedPrices[i]) / 1e18).toFixed(5),
             currentPrice: (Number(prices[i]) / 1e18).toFixed(5),
             taoInPool: (Number(taoInPool[i]) / 1e9).toFixed(2),
-            alphaAmount: (Number(staked1[i] ? stakedAmounts1[i] : stakedAmounts2[i]) / 1e9).toFixed(2),
-          });
-        }
-      } else if (record.type === "TradingV3") {
-        const [prices, taoInPool, stakedV2, stakedV3, stakedPricesV2, stakedPricesV3] = await contract.getInfoV3();
-        const stakedAmountsV2 = await contract.getStakedAmount("0xe22d00573787fa9d0a9954d24931fc98dd4c62252faae19d8d355f28ac3ea873");
-        const stakedAmountsV3 = await contract.getStakedAmount(record.coldkey);
-        for (let i = 0; i < 129; i++) {
-          if (!stakedV2[i] && !stakedV3[i]) continue;
-          stakes.push({
-            netuid: i,
-            taoAmount: (Number((stakedV2[i] ? stakedAmountsV2[i] : stakedAmountsV3[i]) * prices[i]) / 1e27).toFixed(5),
-            stakedPrice: (Number(stakedV2[i] ? stakedPricesV2[i] : stakedPricesV3[i]) / 1e18).toFixed(5),
-            currentPrice: (Number(prices[i]) / 1e18).toFixed(5),
-            taoInPool: (Number(taoInPool[i]) / 1e9).toFixed(2),
-            alphaAmount: (Number(stakedV2[i] ? stakedAmountsV2[i] : stakedAmountsV3[i]) / 1e9).toFixed(2),
+            alphaAmount: (Number(stakedAmounts[i]) / 1e9).toFixed(2),
           });
         }
       } else if (record.type === "MEV") {

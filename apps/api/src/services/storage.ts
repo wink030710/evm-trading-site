@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 export type ContractRecord = {
   id: string
   name: string
-  type: 'MEV' | 'TradingV2' | 'TradingV3' | 'Unknown'
+  type: 'MEV' | 'TradingV3' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
