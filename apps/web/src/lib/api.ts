@@ -43,10 +43,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
 
   const text = await res.text()
-  const data = text ? JSON.parse(text) : undefined
+  const contentType = res.headers.get('content-type') || ''
+  if (text && !contentType.includes('application/json')) {
+    if (text.trimStart().startsWith('<!') || text.trimStart().startsWith('<')) {
+      throw new Error(
+        `Server returned HTML instead of JSON. Is the API URL correct? (${apiUrl})`
+      )
+    }
+  }
+  let data: unknown
+  try {
+    data = text ? JSON.parse(text) : undefined
+  } catch {
+    throw new Error(
+      res.ok
+        ? 'Invalid JSON response from server'
+        : `Server error (${res.status}): check API URL and that the backend is running.`
+    )
+  }
 
   if (!res.ok) {
-    throw new Error((data && data.error) || `http_${res.status}`)
+    throw new Error((data && typeof data === 'object' && 'error' in data && String((data as { error: string }).error)) || `http_${res.status}`)
   }
   return data as T
 }
@@ -167,6 +184,42 @@ export type LogsConfigResponse = {
 
 export async function getLogsConfig() {
   return request<LogsConfigResponse>('/logs/config')
+}
+
+/** Fetch full log file and trigger browser download. Throws on error. */
+export async function downloadLogsFile(): Promise<void> {
+  const token = getToken()
+  const res = await fetch(`${apiUrl}/logs/download`, {
+    method: 'GET',
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  if (!res.ok) {
+    const contentType = res.headers.get('content-type') || ''
+    const text = await res.text()
+    if (contentType.includes('application/json')) {
+      try {
+        const data = JSON.parse(text) as { error?: string; message?: string }
+        throw new Error(data.message || data.error || `HTTP ${res.status}`)
+      } catch (e: any) {
+        if (e instanceof Error && e.message !== text) throw e
+        throw new Error(text || `HTTP ${res.status}`)
+      }
+    }
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  const blob = await res.blob()
+  const disp = res.headers.get('content-disposition') || ''
+  const match = disp.match(/filename="([^"]+)"/)
+  const filename = match ? match[1] : `pm2-logs-${Date.now()}.log`
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 export async function flushLogsServer() {

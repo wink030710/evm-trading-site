@@ -5,6 +5,7 @@ import {
   createContract,
   deleteContract,
   getBalances,
+  downloadLogsFile,
   flushLogsServer,
   getLogsConfig,
   listAbiFiles,
@@ -170,6 +171,8 @@ function LogsView(props: {
   const [restartError, setRestartError] = useState<string | null>(null)
   const [stopError, setStopError] = useState<string | null>(null)
   const [clearError, setClearError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const streamRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
@@ -236,6 +239,18 @@ function LogsView(props: {
     }
   }
 
+  const handleDownload = async () => {
+    setDownloadError(null)
+    setDownloading(true)
+    try {
+      await downloadLogsFile()
+    } catch (e: any) {
+      setDownloadError(e?.message || 'Download failed')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   const handleRestart = async () => {
     const ok = await props.confirm({
       title: 'Restart server',
@@ -297,8 +312,19 @@ function LogsView(props: {
           {clearError ? (
             <div className="errorText" style={{ marginTop: 4 }}>{clearError}</div>
           ) : null}
+          {downloadError ? (
+            <div className="errorText" style={{ marginTop: 4 }}>{downloadError}</div>
+          ) : null}
         </div>
         <div className="rowWrap" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className="btn btnSmall"
+            onClick={handleDownload}
+            disabled={downloading || !config?.available}
+          >
+            {downloading ? 'Downloading…' : 'Download'}
+          </button>
           <button
             type="button"
             className="btn btnSmall"

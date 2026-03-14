@@ -1,12 +1,13 @@
 import express from 'express'
 import type { Response } from 'express'
 import { spawn } from 'node:child_process'
+import { createReadStream } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { requireAuth, type AuthedRequest } from '../middleware/auth.js'
 
 function getPm2AppName(): string {
-  return (process.env.name || process.env.PM2_APP_NAME || 'api').trim()
+  return (process.env.PM2_APP_NAME || 'api').trim()
 }
 
 /** If set (e.g. "g7"), pm2 restart/flush run as this user via sudo -u */
@@ -38,6 +39,35 @@ function getLogFilePath(): string | null {
 
 export function createLogsRouter() {
   const router = express.Router()
+
+  /** No-auth ping to verify /logs routes are mounted (e.g. GET /logs/ping) */
+  router.get('/ping', (_req, res: Response) => {
+    res.json({ ok: true, message: 'logs router mounted' })
+  })
+
+  router.get('/download', requireAuth, (_req: AuthedRequest, res: Response) => {
+    const path = getLogFilePath()
+    if (!path) {
+      return res.status(503).json({
+        error: 'logs_not_configured',
+        message: 'Set LOG_FILE_PATH or run under PM2 to download logs.'
+      })
+    }
+    if (!existsSync(path)) {
+      return res.status(404).json({
+        error: 'log_file_not_found',
+        path
+      })
+    }
+    const filename = `pm2-${getPm2AppName()}-out-${Date.now()}.log`
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    const stream = createReadStream(path, { encoding: 'utf8' })
+    stream.pipe(res)
+    stream.on('error', (err) => {
+      if (!res.headersSent) res.status(500).json({ error: 'read_error', message: err.message })
+    })
+  })
 
   router.get('/config', requireAuth, (_req: AuthedRequest, res: Response) => {
     const path = getLogFilePath()
