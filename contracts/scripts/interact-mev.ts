@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   try {
     const provider = new ethers.JsonRpcProvider("http://185.8.107.85:9944");
 
-    const privateKey = process.env.KEY2;
+    const privateKey = process.env.PRIVATE_KEY;
     if (!privateKey) throw new Error("PRIVATE_KEY not found in environment variables");
 
     const signer = new ethers.Wallet(privateKey, provider);
@@ -27,9 +27,9 @@ async function main(): Promise<void> {
     const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
 
     const stakeAmount = 0n;
-    const alphaNetuid = 24;
+    const alphaNetuid = 34;
     const validatorHotkey =
-      "0xec209866817a50350dd1e73c307409b37472c4215826b12960b81f5c9ef1fd35";
+      "0xcc5bdd36ab3b2452704bfa223f38221548bd3aee235e1c99e2cdd0826e5b786c";
 
     const hotkeyLastByte = parseInt(validatorHotkey.slice(-2), 16);
     const netuidsIndex = alphaNetuid + hotkeyLastByte;
@@ -45,8 +45,17 @@ async function main(): Promise<void> {
     console.log("\nContract balance:", ethers.formatEther(contractBalanceBefore), "TAO");
     console.log("Signer balance:", ethers.formatEther(signerBalanceBefore), "TAO");
 
+    // try {
+    //       await contract.callStatic.ForceStake(stakeAmount, netuidsIndex, validatorHotkey);
+    //       console.log("Preflight callStatic: OK");
+    //     } catch (e) {
+    //       console.log("Preflight callStatic: REVERT");
+    //       throw e;
+    //     }
+
+    const tx = await contract.ForceStake(stakeAmount, netuidsIndex, validatorHotkey);
     // const tx = await contract.emergencyWithdrawTao("0x369850c48b0bdE46076d067C4379A658C6d3d167", ethers.parseEther("10"));
-    const tx = await contract.updateMevAddress("0x18C71A8B99EeEA233bB02D89f5C9F73744BeB590");
+    // const tx = await contract.updateMevAddress("0x18C71A8B99EeEA233bB02D89f5C9F73744BeB590");
 
     const receipt = await tx.wait();
     console.log("Transaction confirmed in block:", receipt!.blockNumber);

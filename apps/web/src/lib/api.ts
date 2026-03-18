@@ -9,13 +9,23 @@ export type ContractRecord = {
   address: string
   ownerAddress: string
   ownerIndex?: number
+  withdrawerAddress?: string
+  withdrawerIndex?: number
   abiFile?: string
   hotkey?: string
   coldkey?: string
+  ss58?: string
   createdAt: string
 }
 
 export const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+
+let apiErrorNotifier: ((message: string) => void) | null = null
+
+/** Register a global error notifier for API request failures. */
+export function setApiErrorNotifier(fn: ((message: string) => void) | null) {
+  apiErrorNotifier = fn
+}
 
 /** Public endpoint: fetch TAO USD price from backend (CoinGecko). */
 export async function getTaoPrice(): Promise<{ usd: number }> {
@@ -39,7 +49,10 @@ export function clearToken() {
   localStorage.removeItem('token')
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+type RequestOptions = { notifyError?: boolean }
+
+async function request<T>(path: string, init?: RequestInit, opts?: RequestOptions): Promise<T> {
+  const notifyError = opts?.notifyError !== false
   const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -47,37 +60,45 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const res = await fetch(`${apiUrl}${path}`, {
-    ...init,
-    headers
-  })
+  try {
+    const res = await fetch(`${apiUrl}${path}`, {
+      ...init,
+      headers
+    })
 
-  const text = await res.text()
-  const contentType = res.headers.get('content-type') || ''
-  if (text && !contentType.includes('application/json')) {
-    if (text.trimStart().startsWith('<!') || text.trimStart().startsWith('<')) {
+    const text = await res.text()
+    const contentType = res.headers.get('content-type') || ''
+    if (text && !contentType.includes('application/json')) {
+      if (text.trimStart().startsWith('<!') || text.trimStart().startsWith('<')) {
+        throw new Error(
+          `Server returned HTML instead of JSON. Is the API URL correct? (${apiUrl})`
+        )
+      }
+    }
+    let data: unknown
+    try {
+      data = text ? JSON.parse(text) : undefined
+    } catch {
       throw new Error(
-        `Server returned HTML instead of JSON. Is the API URL correct? (${apiUrl})`
+        res.ok
+          ? 'Invalid JSON response from server'
+          : `Server error (${res.status}): check API URL and that the backend is running.`
       )
     }
-  }
-  let data: unknown
-  try {
-    data = text ? JSON.parse(text) : undefined
-  } catch {
-    throw new Error(
-      res.ok
-        ? 'Invalid JSON response from server'
-        : `Server error (${res.status}): check API URL and that the backend is running.`
-    )
-  }
 
-  if (!res.ok) {
-    const raw =
-      data && typeof data === 'object' && 'error' in data ? (data as { error: unknown }).error : undefined
-    throw new Error(typeof raw === 'string' ? raw : `http_${res.status}`)
+    if (!res.ok) {
+      const raw =
+        data && typeof data === 'object' && 'error' in data ? (data as { error: unknown }).error : undefined
+      throw new Error(typeof raw === 'string' ? raw : `http_${res.status}`)
+    }
+    return data as T
+  } catch (e: any) {
+    if (notifyError && e?.name !== 'AbortError') {
+      const msg = e?.message || 'Request failed'
+      apiErrorNotifier?.(msg)
+    }
+    throw e
   }
-  return data as T
 }
 
 export async function login(username: string, password: string) {
@@ -105,8 +126,11 @@ export async function createContract(input: {
   address: string
   ownerAddress: string
   ownerIndex?: number
+  withdrawerAddress: string
+  withdrawerIndex?: number
   abiFile?: string
   coldkey?: string
+  ss58?: string
 }) {
   return request<{ contract: ContractRecord }>('/contracts', {
     method: 'POST',
@@ -189,6 +213,46 @@ export async function getBalances(id: string, init?: RequestInit) {
   return request<BalancesResponse>(`/contracts/${id}/balances`, init)
 }
 
+export type DelegateTxRow = {
+  id: string
+  block_number: number
+  timestamp: string
+  action: 'DELEGATE' | 'UNDELEGATE' | string
+  delegate: { ss58: string; hex?: string }
+  amount: string
+  alpha: string
+  netuid: number
+  extrinsic_id: string
+}
+
+export type DelegateTxResponse = {
+  pagination?: {
+    current_page: number
+    per_page: number
+    total_items: number
+    total_pages: number
+    next_page: number | null
+    prev_page: number | null
+  }
+  data: DelegateTxRow[]
+}
+
+export async function listDelegateTransactions(input: {
+  nominator: string
+  limit?: number
+  page?: number
+  action?: 'delegate' | 'undelegate'
+  netuid?: number
+}) {
+  const params = new URLSearchParams()
+  params.set('nominator', input.nominator)
+  if (typeof input.limit === 'number') params.set('limit', String(input.limit))
+  if (typeof input.page === 'number') params.set('page', String(input.page))
+  if (input.action) params.set('action', input.action)
+  if (typeof input.netuid === 'number' && Number.isFinite(input.netuid)) params.set('netuid', String(input.netuid))
+  return request<DelegateTxResponse>(`/transactions/delegate?${params.toString()}`)
+}
+
 export type LogsConfigResponse = {
   path: string
   available: boolean
@@ -250,6 +314,48 @@ export async function restartLogsServer() {
   return request<{ ok: boolean; message?: string }>('/logs/restart', {
     method: 'POST'
   })
+}
+
+export type SubnetIdentityRow = {
+  netuid: number
+  subnet_name?: string | null
+  [k: string]: any
+}
+
+export type SubnetIdentityCache = {
+  updatedAt: string
+  data: SubnetIdentityRow[]
+}
+
+export async function getSubnetIdentityCached() {
+  return request<SubnetIdentityCache>('/subnets/identity')
+}
+
+export async function refreshSubnetIdentity() {
+  return request<SubnetIdentityCache>('/subnets/identity/refresh', { method: 'POST' })
+}
+
+export type DtaoSubnetRow = {
+  netuid?: number
+  name?: string | null
+  fear_and_greed_index?: number | null
+  total_tao?: number | null
+  price_change_1_hour?: number | null
+  price_change_1_day?: number | null
+  price_change_1_week?: number | null
+  price_change_1_month?: number | null
+  price?: number | null
+  tao_buy_volume_24_hr?: number | null
+  tao_sell_volume_24_hr?: number | null
+  github?: string | null
+  subnet_url?: string | null
+  incentive_burn?: number | null
+  is_immune?: boolean | null
+  [k: string]: any
+}
+
+export async function listDtaoSubnets() {
+  return request<{ data: DtaoSubnetRow[] }>('/subnets/dtao-subnets')
 }
 
 /** Open a streaming connection to the logs endpoint. Caller must pass token. Returns an AbortController to disconnect. */

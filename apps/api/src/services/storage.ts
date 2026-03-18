@@ -11,18 +11,26 @@ export type ContractRecord = {
   address: string
   ownerAddress: string
   ownerIndex?: number
+  withdrawerAddress?: string
+  withdrawerIndex?: number
   abiFile?: string
   hotkey?: string
   coldkey?: string
+  ss58?: string
   createdAt: string
 }
 
 type DbSchema = {
   contracts: ContractRecord[]
+  subnetIdentity?: {
+    updatedAt: string
+    data: any[]
+  }
 }
 
 const defaultData: DbSchema = {
-  contracts: []
+  contracts: [],
+  subnetIdentity: { updatedAt: '', data: [] }
 }
 
 export async function getDb() {

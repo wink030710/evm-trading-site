@@ -2,6 +2,8 @@ import express from "express";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { parseUnits } from "ethers";
+import { blake2AsHex, encodeAddress } from "@polkadot/util-crypto";
+import { hexToU8a, stringToU8a, u8aConcat } from "@polkadot/util";
 import { requireAuth } from "../middleware/auth.js";
 import { getConfig } from "../services/config.js";
 import {
@@ -21,8 +23,11 @@ const contractCreateSchema = z
     address: z.string().min(1),
     ownerAddress: z.string().min(1).optional(),
     ownerIndex: z.coerce.number().int().nonnegative().optional(),
+    withdrawerAddress: z.string().min(1).optional(),
+    withdrawerIndex: z.coerce.number().int().nonnegative().optional(),
     abiFile: z.string().min(1).optional(),
     coldkey: z.string().min(1).optional(),
+    ss58: z.string().min(1).optional(),
   })
   .refine(
     (v) =>
@@ -30,6 +35,14 @@ const contractCreateSchema = z
       (v.ownerAddress && v.ownerAddress.trim().length > 0),
     {
       message: "owner_required",
+    },
+  )
+  .refine(
+    (v) =>
+      v.withdrawerIndex !== undefined ||
+      (v.withdrawerAddress && v.withdrawerAddress.trim().length > 0),
+    {
+      message: "withdrawer_required",
     },
   );
 
@@ -64,6 +77,30 @@ function isLikelyAddress(value: string) {
 function isLikelyBytes32(value: string) {
   const v = value.trim();
   return /^0x[a-fA-F0-9]{64}$/.test(v);
+}
+
+function coldkeyFromEvmAddress(address: string) {
+  const v = address.trim();
+  if (!isLikelyAddress(v)) return "";
+  // Frontier-style mapping: blake2_256("evm:" ++ H160(address))
+  return blake2AsHex(u8aConcat(stringToU8a("evm:"), hexToU8a(v)), 256);
+}
+
+function getSs58Prefix() {
+  const raw = String(process.env.SS58_PREFIX || "").trim();
+  const n = raw ? Number(raw) : 42;
+  if (!Number.isInteger(n) || n < 0 || n > 16383) return 42;
+  return n;
+}
+
+function addressToSs58(address: string) {
+  const bytes32 = coldkeyFromEvmAddress(address);
+  if (!bytes32) return "";
+  try {
+    return encodeAddress(hexToU8a(bytes32), getSs58Prefix());
+  } catch {
+    return "";
+  }
 }
 
 function getAmountDecimals() {
@@ -181,6 +218,33 @@ export function createContractsRouter() {
         (c as any).type = "TradingV5";
         changed = true;
       }
+
+      if (!(c as any).coldkey || String((c as any).coldkey).trim().length === 0) {
+        const derived = coldkeyFromEvmAddress(String((c as any).address || ""));
+        if (derived) {
+          (c as any).coldkey = derived;
+          changed = true;
+        }
+      }
+      if (!(c as any).ss58 || String((c as any).ss58).trim().length === 0) {
+        const derived = addressToSs58(String((c as any).address || ""));
+        if (derived) {
+          (c as any).ss58 = derived;
+          changed = true;
+        }
+      }
+
+      if (!(c as any).withdrawerAddress || String((c as any).withdrawerAddress).trim().length === 0) {
+        (c as any).withdrawerAddress = String((c as any).ownerAddress || "");
+        changed = true;
+      }
+      if (
+        (c as any).withdrawerIndex === undefined &&
+        typeof (c as any).ownerIndex === "number"
+      ) {
+        (c as any).withdrawerIndex = (c as any).ownerIndex;
+        changed = true;
+      }
     }
 
     const owners = await getOwners();
@@ -248,9 +312,13 @@ export function createContractsRouter() {
     const owners = await getOwners();
     const requestedIndex = body.data.ownerIndex;
     const requestedAddress = body.data.ownerAddress?.trim();
+    const requestedWithdrawerIndex = body.data.withdrawerIndex;
+    const requestedWithdrawerAddress = body.data.withdrawerAddress?.trim();
 
     let resolvedOwnerIndex: number | undefined = undefined;
     let resolvedOwnerAddress: string | undefined = requestedAddress;
+    let resolvedWithdrawerIndex: number | undefined = undefined;
+    let resolvedWithdrawerAddress: string | undefined = requestedWithdrawerAddress;
 
     if (owners.length > 0) {
       if (requestedIndex !== undefined) {
@@ -268,10 +336,29 @@ export function createContractsRouter() {
         resolvedOwnerIndex = owner.index;
         resolvedOwnerAddress = owner.address;
       }
+
+      if (requestedWithdrawerIndex !== undefined) {
+        const w = owners.find((o) => o.index === requestedWithdrawerIndex);
+        if (!w)
+          return res.status(400).json({ error: "withdrawer_index_not_available" });
+        resolvedWithdrawerIndex = w.index;
+        resolvedWithdrawerAddress = w.address;
+      } else if (requestedWithdrawerAddress) {
+        const w = owners.find(
+          (o) => o.address === requestedWithdrawerAddress.toLowerCase(),
+        );
+        if (!w)
+          return res.status(400).json({ error: "withdrawer_not_available" });
+        resolvedWithdrawerIndex = w.index;
+        resolvedWithdrawerAddress = w.address;
+      }
     }
 
     if (!resolvedOwnerAddress) {
       return res.status(400).json({ error: "owner_required" });
+    }
+    if (!resolvedWithdrawerAddress) {
+      return res.status(400).json({ error: "withdrawer_required" });
     }
 
     let resolvedAbiFile: string;
@@ -292,6 +379,19 @@ export function createContractsRouter() {
       if (!isLikelyBytes32(ck))
         return res.status(400).json({ error: "invalid_coldkey" });
       coldkey = ck.toLowerCase();
+    }
+    if (!coldkey) {
+      const derived = coldkeyFromEvmAddress(body.data.address);
+      if (!derived) return res.status(400).json({ error: "invalid_contract_address" });
+      coldkey = derived;
+    }
+
+    let ss58: string | undefined = undefined;
+    const ss = (body.data.ss58 || "").trim();
+    if (ss) ss58 = ss;
+    if (!ss58) {
+      const derived = addressToSs58(body.data.address);
+      if (derived) ss58 = derived;
     }
 
     const db = await getDb();
@@ -316,8 +416,11 @@ export function createContractsRouter() {
       address: body.data.address,
       ownerAddress: resolvedOwnerAddress,
       ownerIndex: resolvedOwnerIndex,
+      withdrawerAddress: resolvedWithdrawerAddress,
+      withdrawerIndex: resolvedWithdrawerIndex,
       abiFile: resolvedAbiFile,
       coldkey,
+      ss58,
       createdAt: new Date().toISOString(),
     };
 
@@ -545,13 +648,23 @@ export function createContractsRouter() {
       }
 
       const contract =
-        typeof record.ownerIndex === "number"
+        typeof (record as any).withdrawerIndex === "number"
           ? await getContractForOwnerIndex(
               record.address,
               abiFile,
-              record.ownerIndex,
+              (record as any).withdrawerIndex,
             )
-          : await getContract(record.address, abiFile, record.ownerAddress);
+          : typeof record.ownerIndex === "number"
+            ? await getContractForOwnerIndex(
+                record.address,
+                abiFile,
+                record.ownerIndex,
+              )
+            : await getContract(
+                record.address,
+                abiFile,
+                ((record as any).withdrawerAddress || record.ownerAddress).trim(),
+              );
       const tx = await submitWithdraw(contract, to, amountUnits);
       const receipt = await tx.wait();
       return res.json({
