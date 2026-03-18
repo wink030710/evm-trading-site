@@ -86,6 +86,24 @@ a {
   flex-wrap: wrap;
 }
 
+.appHeaderTao {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-width: 120px;
+}
+
+.appHeaderTaoPrice {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.appHeaderTaoPrice .mono {
+  font-variant-numeric: tabular-nums;
+}
+
 .appHeaderApi {
   font-size: 13px;
   font-family: var(--font-mono);
@@ -611,6 +629,26 @@ select.input {
   gap: 16px;
 }
 
+.cardHeaderAddressBox {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  max-width: 820px;
+}
+
+.cardHeaderNameType {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+
 .cardHeaderAddressRow {
   display: flex;
   align-items: center;
@@ -796,4 +834,54 @@ select.input {
 .logsHighlightGood {
   color: #4ade80;
   font-weight: 500;
+}
+
+/* --- Dashboard table --- */
+.dashboardTableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.dashboardTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.dashboardTable th,
+.dashboardTable td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.dashboardTable th.num,
+.dashboardTable td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboardTable tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dashboardTableRowClickable {
+  cursor: pointer;
+}
+
+.dashboardTableRowClickable:hover {
+  background: rgba(61, 106, 255, 0.08);
+}
+
+.dashboardTableFoot {
+  font-weight: 600;
+  background: rgba(61, 106, 255, 0.08);
+  border-top: 2px solid var(--border-default);
+}
+
+.dashboardTableFoot th,
+.dashboardTableFoot td {
+  border-bottom: none;
+  padding: 14px 16px;
 }

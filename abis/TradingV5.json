@@ -1,0 +1,21 @@
+[
+  "function owner() view returns (address)",
+  "function withdrawAll(address to)",
+  "function add_stake(uint256 stakeAmount, uint256 alphaNetuid)",
+  "function add_stakes(uint256 stakeAmount, uint256[] calldata alphaNetuids)",
+  "function increase_stake(uint256 stakeAmount, uint256 alphaNetuid)",
+  "function increase_stakes(uint256 stakeAmount, uint256[] calldata alphaNetuids)",
+  "function force_remove_stake(uint256 alphaNetuid)",
+  "function force_remove_stake(uint256[] calldata alphaNetuids)",
+  "function remove_stake(uint256 alphaNetuid)",
+  "function remove_stakes(uint256[] calldata alphaNetuids)",
+  "function emergencyWithdrawTao(address to, uint256 amount)",
+  "function balance() view returns (uint256)",
+  "function getInfo() external view returns (uint256[129] memory prices, uint64[129] memory taoInPool, bool[129] memory staked, uint256[129] memory stakedPrices)",
+  "function getInfo_Old() external view returns (uint256[129] memory prices, uint64[129] memory taoInPool, bool[129] memory staked_old, bool[129] memory staked, uint256[129] memory stakedPrices_old, uint256[129] memory stakedPrices)",
+  "function getStakedPrices() external view returns (uint256[129] memory)",
+  "function getTimestamps() external view returns (uint256[129] memory)",
+  "function getIsStaked() external view returns (bool[129] memory)",
+  "function getStakedAmount(bytes32 validatorColdkey) external view returns (uint256[129] memory amount)",
+  "function reset(uint256 alphaNetuid)"
+]

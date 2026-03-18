@@ -1,0 +1,36 @@
+{
+  "name": "@evm-trading/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy:base": "hardhat run scripts/deploy.ts --network base",
+    "deploy:bsc": "hardhat run scripts/deploy.ts --network bsc",
+    "deploy:bittensor": "hardhat run scripts/deploy.ts --network bittensor-evm",
+    "deploy:bsc-testnet": "hardhat run scripts/deploy.ts --network bsc-testnet",
+    "send:base-to-bittensor": "hardhat run scripts/sendBscToBittensor.ts --network base",
+    "send:bsc-to-bittensor": "hardhat run scripts/sendBscToBittensor.ts --network bsc",
+    "verify-peer:base": "hardhat run scripts/verifyPeer.ts --network base",
+    "verify-peer:bsc": "hardhat run scripts/verifyPeer.ts --network bsc",
+    "verify-peer:bittensor": "hardhat run scripts/verifyPeer.ts --network bittensor-evm"
+  },
+  "devDependencies": {
+    "@layerzerolabs/lz-evm-messagelib-v2": "^3.0.148",
+    "@layerzerolabs/lz-evm-protocol-v2": "^3.0.148",
+    "@layerzerolabs/lz-evm-v1-0.7": "^3.0.148",
+    "@nomicfoundation/hardhat-ethers": "^3.0.0",
+    "@openzeppelin/contracts": "4.9.6",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.4.0",
+    "hardhat": "^2.22.0",
+    "ts-node": "^10.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@layerzerolabs/oapp-evm": "^0.4.1",
+    "solc": "^0.8.34"
+  },
+  "overrides": {
+    "@openzeppelin/contracts": "4.9.6"
+  }
+}

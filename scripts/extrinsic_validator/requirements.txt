@@ -1,0 +1,2 @@
+substrate-interface>=1.7.0
+scalecodec>=1.3.0

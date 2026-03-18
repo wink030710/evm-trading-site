@@ -5,7 +5,7 @@ export type ApiError = {
 export type ContractRecord = {
   id: string
   name: string
-  type: 'MEV' | 'TradingV3' | 'Unknown'
+  type: 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -15,7 +15,17 @@ export type ContractRecord = {
   createdAt: string
 }
 
-const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+export const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+
+/** Public endpoint: fetch TAO USD price from backend (CoinGecko). */
+export async function getTaoPrice(): Promise<{ usd: number }> {
+  const res = await fetch(`${apiUrl}/price/tao`, { headers: { Accept: 'application/json' } })
+  const data = (await res.json()) as { usd?: number; error?: string; message?: string }
+  if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`)
+  const usd = data.usd
+  if (typeof usd !== 'number' || !Number.isFinite(usd)) throw new Error('Invalid price response')
+  return { usd }
+}
 
 export function getToken() {
   return localStorage.getItem('token')
@@ -63,7 +73,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    throw new Error((data && typeof data === 'object' && 'error' in data && String((data as { error: string }).error)) || `http_${res.status}`)
+    const raw =
+      data && typeof data === 'object' && 'error' in data ? (data as { error: unknown }).error : undefined
+    throw new Error(typeof raw === 'string' ? raw : `http_${res.status}`)
   }
   return data as T
 }
@@ -89,7 +101,7 @@ export async function listAbiFiles() {
 
 export async function createContract(input: {
   name: string
-  type: 'MEV' | 'TradingV3' | 'Unknown'
+  type: 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -161,8 +173,8 @@ export type StakeRow = {
   currentPrice?: string
 }
 
-export async function listStakes(id: string) {
-  return request<{ stakes: StakeRow[] }>(`/contracts/${id}/stakes`)
+export async function listStakes(id: string, init?: RequestInit) {
+  return request<{ stakes: StakeRow[] }>(`/contracts/${id}/stakes`, init)
 }
 
 export type BalancesResponse = {
@@ -173,8 +185,8 @@ export type BalancesResponse = {
   decimals: number
 }
 
-export async function getBalances(id: string) {
-  return request<BalancesResponse>(`/contracts/${id}/balances`)
+export async function getBalances(id: string, init?: RequestInit) {
+  return request<BalancesResponse>(`/contracts/${id}/balances`, init)
 }
 
 export type LogsConfigResponse = {

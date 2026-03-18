@@ -17,7 +17,7 @@ import { type ContractRecord, getDb, newId } from "../services/storage.js";
 const contractCreateSchema = z
   .object({
     name: z.string().min(1),
-    type: z.enum(["MEV", "TradingV3", "Unknown"]),
+    type: z.enum(["MEV", "TradingV3", "TradingV4", "TradingV5", "Unknown"]),
     address: z.string().min(1),
     ownerAddress: z.string().min(1).optional(),
     ownerIndex: z.coerce.number().int().nonnegative().optional(),
@@ -175,10 +175,10 @@ export function createContractsRouter() {
       }
       const t = String((c as any).type || "").trim();
       if (t === "Trading") {
-        (c as any).type = "TradingV3";
+        (c as any).type = "TradingV5";
         changed = true;
-      } else if (t !== "MEV" && t !== "TradingV3" && t !== "Unknown") {
-        (c as any).type = "TradingV3";
+      } else if (t !== "MEV" && t !== "TradingV3" && t !== "TradingV4" && t !== "TradingV5" && t !== "Unknown") {
+        (c as any).type = "TradingV5";
         changed = true;
       }
     }
@@ -446,7 +446,7 @@ export function createContractsRouter() {
             )
           : await getContract(record.address, abiFile, record.ownerAddress);
       let tx, receipt;
-      if (record.type == "MEV"){
+      if (record.type === "MEV") {
         tx = await contract.ForceStake(0, 0);
       } else {
         tx = await contract.force_remove_stake(body.data.netuid);
@@ -605,7 +605,7 @@ export function createContractsRouter() {
               record.ownerIndex,
             )
           : await getContract(record.address, abiFile, record.ownerAddress);
-      if (record.type === "TradingV3") {
+      if (record.type === "TradingV4" || record.type === "TradingV5") {
         const [prices, taoInPool, staked, stakedPrices] = await contract.getInfo();
         const stakedAmounts = await contract.getStakedAmount(record.coldkey);
         for (let i = 0; i < 129; i++) {
@@ -619,9 +619,25 @@ export function createContractsRouter() {
             alphaAmount: (Number(stakedAmounts[i]) / 1e9).toFixed(2),
           });
         }
-      } else if (record.type === "MEV") {
-
       }
+      // else if (record.type === "TradingV5") {
+      //   const [prices, taoInPool, stakedV3, stakedV4, stakedPricesV3, stakedPricesV4] = await contract.getInfo_Old();
+      //   const stakedAmountsV3 = await contract.getStakedAmount("0xc9d7c3d30fdb7566bd715a84829c6365a156064a661eeebdf341456e6fc4cb75");
+      //   const stakedAmountsV4 = await contract.getStakedAmount(record.coldkey);
+      //   for (let i = 0; i < 129; i++) {
+      //     if (!stakedV3[i] && !stakedV4[i]) continue;
+      //     const stakedPrice = stakedV3[i] ? Number(stakedPricesV3[i]) / 1e18 : Number(stakedPricesV4[i]) / 1e18;
+      //     const stakedAmount = stakedV3[i] ? Number(stakedAmountsV3[i]) : Number(stakedAmountsV4[i]);
+      //     stakes.push({
+      //       netuid: i,
+      //       taoAmount: ((Number(stakedAmount) * Number(prices[i])) / 1e27).toFixed(5),
+      //       stakedPrice: stakedPrice.toFixed(5),
+      //       currentPrice: (Number(prices[i]) / 1e18).toFixed(5),
+      //       taoInPool: (Number(taoInPool[i]) / 1e9).toFixed(2),
+      //       alphaAmount: (Number(stakedAmount) / 1e9).toFixed(2),
+      //     });
+      //   }
+      // }
       return res.json({ stakes });
     } catch (e: any) {
       return res.status(500).json({ error: e?.message || "tx_failed" });

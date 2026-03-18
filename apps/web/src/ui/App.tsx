@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   addStake,
   clearToken,
@@ -8,6 +9,7 @@ import {
   downloadLogsFile,
   flushLogsServer,
   getLogsConfig,
+  getTaoPrice,
   listAbiFiles,
   listContracts,
   listOwners,
@@ -24,10 +26,51 @@ import {
   type StakeRow
 } from '../lib/api'
 
+const TAO_POLL_MS = 15_000 // 15 seconds
+
+function useTaoPrice(): { price: string | null; error: string | null } {
+  const [price, setPrice] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    function fetchPrice() {
+      getTaoPrice()
+        .then(({ usd }) => {
+          setPrice(usd >= 1 ? usd.toFixed(2) : usd.toFixed(4))
+          setError(null)
+        })
+        .catch((e: any) => {
+          setError(e?.message || 'Price unavailable')
+        })
+    }
+
+    fetchPrice()
+    const interval = setInterval(fetchPrice, TAO_POLL_MS)
+    return () => clearInterval(interval)
+  }, [])
+
+  return { price, error }
+}
+
 export function App() {
   const [tokenPresent, setTokenPresent] = useState(() => Boolean(localStorage.getItem('token')))
   const [error, setError] = useState<string | null>(null)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
+  const [confirmState, setConfirmState] = useState<null | {
+    title: string
+    message: string
+    confirmText?: string
+    cancelText?: string
+    danger?: boolean
+    resolve: (v: boolean) => void
+  }>(null)
+  const { price: taoPrice, error: taoError } = useTaoPrice()
+
+  const confirm = useCallback(
+    (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) =>
+      new Promise<boolean>((resolve) => setConfirmState({ ...input, resolve })),
+    []
+  )
 
   useEffect(() => {
     const onStorage = () => setTokenPresent(Boolean(localStorage.getItem('token')))
@@ -44,13 +87,29 @@ export function App() {
             {import.meta.env.VITE_API_URL || 'http://localhost:4000'}
           </div>
         </div>
+        <div className="appHeaderTao">
+          {taoError ? (
+            <span className="muted" title={taoError}>TAO —</span>
+          ) : taoPrice ? (
+            <span className="appHeaderTaoPrice">TAO $<span className="mono">{taoPrice}</span></span>
+          ) : (
+            <span className="muted">TAO …</span>
+          )}
+        </div>
         {tokenPresent ? (
-          <button
-            className="btn btnSmall"
-            onClick={() => setLogoutConfirmOpen(true)}
-          >
-            Logout
-          </button>
+          <div className="rowWrap" style={{ gap: 12, alignItems: 'center' }}>
+            <nav className="rowWrap" style={{ gap: 8 }}>
+              <Link to="/" className="btn btnSmall">Dashboard</Link>
+              <Link to="/contracts" className="btn btnSmall">Contracts</Link>
+              <Link to="/logs" className="btn btnSmall">Logs</Link>
+            </nav>
+            <button
+              className="btn btnSmall"
+              onClick={() => setLogoutConfirmOpen(true)}
+            >
+              Logout
+            </button>
+          </div>
         ) : null}
       </header>
 
@@ -82,7 +141,27 @@ export function App() {
       <div className="spacer16" />
 
       {tokenPresent ? (
-        <Authed onError={setError} />
+        <>
+          <Routes>
+            <Route path="/" element={<Dashboard onError={setError} />} />
+            <Route path="/dashboard" element={<Navigate to="/" replace />} />
+            <Route path="/contracts" element={<ContractsView onError={setError} confirm={confirm} />} />
+            <Route path="/logs" element={<div className="layoutSingle"><LogsView onError={setError} confirm={confirm} /></div>} />
+          </Routes>
+          {confirmState ? (
+            <ConfirmDialog
+              title={confirmState.title}
+              message={confirmState.message}
+              confirmText={confirmState.confirmText}
+              cancelText={confirmState.cancelText}
+              danger={confirmState.danger}
+              onClose={(result) => {
+                confirmState.resolve(result)
+                setConfirmState(null)
+              }}
+            />
+          ) : null}
+        </>
       ) : (
         <div className="loginCenter">
           <Login
@@ -361,7 +440,8 @@ function LogsView(props: {
           lines.map((line, i) => {
             const isPlus =
               line.startsWith('Balance changed: +') || line.startsWith('Staking... [')
-            const isMinus = line.startsWith('Balance changed: -')
+            const isMinus =
+              line.startsWith('Balance changed: -') || line.includes('Attacking: True')
             const lineClass = isPlus
               ? 'logsStreamLinePlus'
               : isMinus
@@ -437,9 +517,189 @@ function renderHighlightedLogText(line: string): React.ReactNode {
   return segments
 }
 
-function Authed(props: { onError: (e: string | null) => void }) {
+type DashboardRow = {
+  id: string
+  name: string
+  type: string
+  total: number | null
+  free: number | null
+  staked: number | null
+  fee: number | null
+}
+
+function Dashboard(props: { onError: (e: string | null) => void }) {
+  const navigate = useNavigate()
+  const [rows, setRows] = useState<DashboardRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setLocalError] = useState<string | null>(null)
+
+  const refresh = useCallback(() => {
+    setLocalError(null)
+    setLoading(true)
+    listContracts()
+      .then(({ contracts }) => {
+        if (!contracts.length) {
+          setRows([])
+          return
+        }
+        return Promise.all(
+          contracts.map(async (c): Promise<DashboardRow> => {
+            try {
+              const [bal, stakesResp] = await Promise.all([
+                getBalances(c.id),
+                listStakes(c.id)
+              ])
+              const freeStr = formatUnitsLike(bal.contractBalanceWei, bal.decimals)
+              const feeStr = formatUnitsLike(bal.ownerBalanceWei, bal.decimals)
+              const freeNum = safeDecimalNumber(freeStr)
+              const feeNum = safeDecimalNumber(feeStr)
+              let stakedNum: number | null = 0
+              for (const s of stakesResp.stakes) {
+                const tn = safeDecimalNumber(s.taoAmount)
+                if (tn === null) {
+                  stakedNum = null
+                  break
+                }
+                stakedNum += tn
+              }
+              const totalNum =
+                freeNum !== null && stakedNum !== null ? freeNum + stakedNum : null
+              return {
+                id: c.id,
+                name: c.name,
+                type: c.type,
+                total: totalNum,
+                free: freeNum,
+                staked: stakedNum,
+                fee: feeNum
+              }
+            } catch {
+              return {
+                id: c.id,
+                name: c.name,
+                type: c.type,
+                total: null,
+                free: null,
+                staked: null,
+                fee: null
+              }
+            }
+          })
+        ).then((r) => setRows(r))
+      })
+      .catch((e: any) => {
+        const msg = e?.message || 'Failed to load contracts'
+        setLocalError(msg)
+        props.onError(msg)
+        setRows([])
+      })
+      .finally(() => setLoading(false))
+  }, [props.onError])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  const sums = useMemo(() => {
+    let total = 0
+    let free = 0
+    let staked = 0
+    let fee = 0
+    for (const r of rows) {
+      if (r.total !== null) total += r.total
+      if (r.free !== null) free += r.free
+      if (r.staked !== null) staked += r.staked
+      if (r.fee !== null) fee += r.fee
+    }
+    return { total, free, staked, fee }
+  }, [rows])
+
+  const fmt = (n: number | null) => (n !== null ? n.toFixed(5) : '—')
+
+  return (
+    <div className="layoutSingle">
+      <div className="card">
+        <div className="rowWrap" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 className="h1" style={{ margin: 0 }}>Dashboard</h2>
+          <button
+            type="button"
+            className="btn"
+            disabled={loading}
+            onClick={refresh}
+          >
+            {loading ? 'Loading…' : 'Refresh'}
+          </button>
+        </div>
+        <div className="spacer16" />
+        {error ? (
+          <div className="card cardError">
+            <div className="muted">Error</div>
+            <div>{error}</div>
+          </div>
+        ) : loading ? (
+          <div className="muted">Loading…</div>
+        ) : (
+          <div className="dashboardTableWrap">
+            <table className="dashboardTable">
+              <thead>
+                <tr>
+                  <th>Contract</th>
+                  <th>Type</th>
+                  <th className="num">Total</th>
+                  <th className="num">Free</th>
+                  <th className="num">Staked</th>
+                  <th className="num">Fee</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr
+                    key={r.id}
+                    className="dashboardTableRowClickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => navigate(`/contracts?id=${encodeURIComponent(r.id)}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        navigate(`/contracts?id=${encodeURIComponent(r.id)}`)
+                      }
+                    }}
+                  >
+                    <td>{r.name}</td>
+                    <td><span className="badge">{r.type}</span></td>
+                    <td className="mono num">{fmt(r.total)}</td>
+                    <td className="mono num">{fmt(r.free)}</td>
+                    <td className="mono num">{fmt(r.staked)}</td>
+                    <td className="mono num">{fmt(r.fee)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="dashboardTableFoot">
+                  <th>Total</th>
+                  <th aria-hidden="true" />
+                  <th className="mono num">{sums.total.toFixed(5)}</th>
+                  <th className="mono num">{sums.free.toFixed(5)}</th>
+                  <th className="mono num">{sums.staked.toFixed(5)}</th>
+                  <th className="mono num">{sums.fee.toFixed(5)}</th>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ContractsView(props: {
+  onError: (e: string | null) => void
+  confirm: (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>
+}) {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [contracts, setContracts] = useState<ContractRecord[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('id'))
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -490,34 +750,14 @@ function Authed(props: { onError: (e: string | null) => void }) {
   const [ownersLoading, setOwnersLoading] = useState(false)
   const [ownersError, setOwnersError] = useState<string | null>(null)
 
-  const [selectedBalances, setSelectedBalances] = useState<null | {
-    ownerBalanceWei: string
-    contractBalanceWei: string
-    decimals: number
-  }>(null)
-  const [selectedBalancesError, setSelectedBalancesError] = useState<string | null>(null)
-
-  const [activeView, setActiveView] = useState<'contracts' | 'logs'>('contracts')
-
-  const [confirmState, setConfirmState] = useState<null | {
-    title: string
-    message: string
-    confirmText?: string
-    cancelText?: string
-    danger?: boolean
-    resolve: (v: boolean) => void
-  }>(null)
-
-  const confirm = useCallback(
-    (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => {
-      return new Promise<boolean>((resolve) => {
-        setConfirmState({ ...input, resolve })
-      })
-    },
-    []
-  )
-
   const selected = useMemo(() => contracts.find((c) => c.id === selectedId) || null, [contracts, selectedId])
+
+  useEffect(() => {
+    const idFromUrl = searchParams.get('id')
+    if (idFromUrl && contracts.some((c) => c.id === idFromUrl)) {
+      setSelectedId(idFromUrl)
+    }
+  }, [searchParams, contracts])
 
   const filteredContracts = useMemo(() => {
     const q = selectQuery.trim().toLowerCase()
@@ -530,43 +770,17 @@ function Authed(props: { onError: (e: string | null) => void }) {
     })
   }, [contracts, selectQuery])
 
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      if (!selected) {
-        setSelectedBalances(null)
-        setSelectedBalancesError(null)
-        return
-      }
-      setSelectedBalances(null)
-      setSelectedBalancesError(null)
-      try {
-        const resp = await getBalances(selected.id)
-        if (cancelled) return
-        setSelectedBalances({
-          ownerBalanceWei: resp.ownerBalanceWei,
-          contractBalanceWei: resp.contractBalanceWei,
-          decimals: resp.decimals
-        })
-      } catch (e: any) {
-        if (cancelled) return
-        setSelectedBalances(null)
-        setSelectedBalancesError(e?.message || 'failed_to_load_balances')
-      }
-    }
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [selected])
-
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
       const resp = await listContracts()
       setContracts(resp.contracts)
-      if (resp.contracts.length && !selectedId) setSelectedId(resp.contracts[0].id)
-      if (selectedId && !resp.contracts.some((c) => c.id === selectedId)) {
+      const idFromUrl = searchParams.get('id')
+      if (idFromUrl && resp.contracts.some((c) => c.id === idFromUrl)) {
+        setSelectedId(idFromUrl)
+      } else if (resp.contracts.length && !selectedId) {
+        setSelectedId(resp.contracts[0].id)
+      } else if (selectedId && !resp.contracts.some((c) => c.id === selectedId)) {
         setSelectedId(resp.contracts[0]?.id ?? null)
       }
     } catch (e: any) {
@@ -574,7 +788,7 @@ function Authed(props: { onError: (e: string | null) => void }) {
     } finally {
       setLoading(false)
     }
-  }, [props.onError, selectedId])
+  }, [props.onError, searchParams, selectedId])
 
   const refreshAll = useCallback(async () => {
     await refresh()
@@ -608,15 +822,9 @@ function Authed(props: { onError: (e: string | null) => void }) {
       <div className="card">
         <div className="cardHeader">
           <div>
-            {activeView === 'logs' ? (
-              <div className="rowWrap" style={{ gap: 8, alignItems: 'center' }}>
-                <span className="h1" style={{ margin: 0 }}>PM2 Logs</span>
-              </div>
-            ) : selected ? (
-              <div className="cardHeaderAddresses" style={{ maxWidth: 820 }}>
-                <div className="mono truncate contractBadge" title={selected.address}>
-                  {selected.name} ({selected.type})
-                </div>
+            {selected ? (
+              <div className="cardHeaderAddressBox">
+                <span className="cardHeaderNameType">{selected.name} ({selected.type})</span>
                 <div className="cardHeaderAddressRow">
                   <span className="cardHeaderAddressLabel">Contract</span>
                   <span className="cardHeaderAddressValue truncate" title={selected.address}>
@@ -702,80 +910,54 @@ function Authed(props: { onError: (e: string | null) => void }) {
           </div>
 
           <div className="rowWrap" style={{ gap: 8, justifyContent: 'flex-end' }}>
-            {activeView === 'logs' ? (
-              <button className="btn" onClick={() => setActiveView('contracts')}>
-                Contracts
-              </button>
-            ) : (
-              <>
-                <div className="row" style={{ gap: 8 }}>
-                  <div className="muted">Total</div>
-                  <div className="badge">{contracts.length}</div>
-                </div>
-                <button
-                  className="btn"
-                  disabled={globalBusy || contracts.length === 0}
-                  onClick={() => {
-                    setSelectQuery('')
-                    setSelectModalOpen(true)
-                  }}
-                >
-                  Select
-                </button>
-                <button
-                  className="btn btnPrimary"
-                  disabled={globalBusy}
-                  onClick={() => {
-                    setCreateError(null)
-                    setAddModalOpen(true)
-                  }}
-                >
-                  Add
-                </button>
-                <button className="btn" disabled={loading || globalBusy} onClick={refreshAll}>
-                  {loading ? 'Refreshing…' : 'Refresh'}
-                </button>
-                <button className="btn btnSmall" onClick={() => setActiveView('logs')}>
-                  Logs
-                </button>
-              </>
-            )}
+            <div className="row" style={{ gap: 8 }}>
+              <div className="muted">Total</div>
+              <div className="badge">{contracts.length}</div>
+            </div>
+            <button
+              className="btn"
+              disabled={globalBusy || contracts.length === 0}
+              onClick={() => {
+                setSelectQuery('')
+                setSelectModalOpen(true)
+              }}
+            >
+              Select
+            </button>
+            <button
+              className="btn btnPrimary"
+              disabled={globalBusy}
+              onClick={() => {
+                setCreateError(null)
+                setAddModalOpen(true)
+              }}
+            >
+              Add
+            </button>
+            <button className="btn" disabled={loading || globalBusy} onClick={refreshAll}>
+              {loading ? 'Refreshing…' : 'Refresh'}
+            </button>
           </div>
         </div>
 
         <div className="spacer16" />
 
-      {activeView === 'logs' ? (
-        <LogsView onError={props.onError} confirm={confirm} />
-      ) : selected ? (
+      {selected ? (
         <ContractDetail
+          key={selected.id}
           contract={selected}
           refreshNonce={detailRefreshNonce}
           requestRefresh={() => setDetailRefreshNonce((n) => n + 1)}
           onError={(e) => {
             props.onError(e)
           }}
-          confirm={confirm}
+          confirm={props.confirm}
           setGlobalBusy={setGlobalBusy}
         />
       ) : (
         <div className="muted">Select a contract from the list</div>
       )}
     </div>
-
-      {confirmState ? (
-        <ConfirmDialog
-          title={confirmState.title}
-          message={confirmState.message}
-          confirmText={confirmState.confirmText}
-          cancelText={confirmState.cancelText}
-          danger={confirmState.danger}
-          onClose={(result) => {
-            confirmState.resolve(result)
-            setConfirmState(null)
-          }}
-        />
-      ) : null}
 
       {addModalOpen ? (
         <Modal
@@ -792,10 +974,10 @@ function Authed(props: { onError: (e: string | null) => void }) {
             creating={creating}
             disabled={globalBusy}
             error={createError}
-            confirm={confirm}
+            confirm={props.confirm}
             onCreate={async (input: {
               name: string
-              type: 'MEV' | 'TradingV3' | 'Unknown'
+              type: 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'
               address: string
               ownerAddress: string
               ownerIndex?: number
@@ -809,6 +991,7 @@ function Authed(props: { onError: (e: string | null) => void }) {
                 const resp = await createContract(input)
                 await refresh()
                 setSelectedId(resp.contract.id)
+                setSearchParams({ id: resp.contract.id })
                 setAddModalOpen(false)
               } catch (e: any) {
                 const msg = e?.message || 'create_failed'
@@ -859,6 +1042,7 @@ function Authed(props: { onError: (e: string | null) => void }) {
                   onClick={() => {
                     if (globalBusy) return
                     setSelectedId(c.id)
+                    setSearchParams({ id: c.id })
                     setSelectModalOpen(false)
                   }}
                   onKeyDown={(e) => {
@@ -866,6 +1050,7 @@ function Authed(props: { onError: (e: string | null) => void }) {
                       e.preventDefault()
                       if (globalBusy) return
                       setSelectedId(c.id)
+                      setSearchParams({ id: c.id })
                       setSelectModalOpen(false)
                     }
                   }}
@@ -916,7 +1101,7 @@ function Authed(props: { onError: (e: string | null) => void }) {
                       onClick={async (e) => {
                         e.preventDefault()
                         e.stopPropagation()
-                        const ok = await confirm({
+                        const ok = await props.confirm({
                           title: 'Delete contract',
                           message: `Delete this contract from the list?\n\n${c.address}`,
                           confirmText: 'Delete',
@@ -1016,7 +1201,7 @@ function ContractCreate(props: {
   confirm: (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>
   onCreate: (input: {
     name: string
-    type: 'MEV' | 'TradingV3' | 'Unknown'
+    type: 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'
     address: string
     ownerAddress: string
     ownerIndex?: number
@@ -1025,7 +1210,7 @@ function ContractCreate(props: {
   }) => Promise<void>
 }) {
   const [name, setName] = useState('')
-  const [type, setType] = useState<'MEV' | 'TradingV3' | 'Unknown'>('TradingV3')
+  const [type, setType] = useState<'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'>('TradingV5')
   const [address, setAddress] = useState('')
   const [ownerIndex, setOwnerIndex] = useState<string>('')
   const [abiFile, setAbiFile] = useState('')
@@ -1092,9 +1277,11 @@ function ContractCreate(props: {
         className="input"
         value={type}
         disabled={props.disabled || props.creating}
-        onChange={(e) => setType(e.target.value as 'MEV' | 'TradingV3' | 'Unknown')}
+        onChange={(e) => setType(e.target.value as 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown')}
       >
         <option value="TradingV3">TradingV3</option>
+        <option value="TradingV4">TradingV4</option>
+        <option value="TradingV5">TradingV5</option>
         <option value="MEV">MEV</option>
         <option value="Unknown">Unknown</option>
       </select>
@@ -1210,7 +1397,7 @@ function ContractCreate(props: {
             coldkey: coldkeyBytes32 || undefined
           })
           setName('')
-          setType('TradingV3')
+          setType('TradingV5')
           setAddress('')
           setOwnerIndex('')
           setAbiFile('')
@@ -1263,7 +1450,7 @@ function ContractDetail(props: {
     return () => props.setGlobalBusy(false)
   }, [actionsDisabled, props.setGlobalBusy])
 
-  const [stakes, setStakes] = useState<StakeRow[] | null>(null)
+  const [stakes, setStakes] = useState<StakeRow[]>([])
   const [stakesError, setStakesError] = useState<string | null>(null)
   const [stakesLoading, setStakesLoading] = useState(false)
   const [balances, setBalances] = useState<null | {
@@ -1277,51 +1464,70 @@ function ContractDetail(props: {
     dir: 'desc'
   })
 
-  const refreshStakes = useCallback(async () => {
+  const refreshStakes = useCallback(async (signal?: AbortSignal) => {
+    const contractId = props.contract.id
     setStakesLoading(true)
     setStakesError(null)
     try {
-      const resp = await listStakes(props.contract.id)
-      setStakes(resp.stakes)
+      const resp = await listStakes(contractId, { signal })
+      if (signal?.aborted) return
+      if (contractId === props.contract.id) {
+        setStakes(resp.stakes)
+      }
     } catch (e: any) {
-      setStakesError(e?.message || 'failed_to_load_stakes')
+      if (e?.name === 'AbortError') return
+      if (contractId === props.contract.id) {
+        setStakesError(e?.message || 'failed_to_load_stakes')
+      }
     } finally {
-      setStakesLoading(false)
+      if (!signal?.aborted && contractId === props.contract.id) {
+        setStakesLoading(false)
+      }
     }
   }, [props.contract.id])
 
-  const refreshBalances = useCallback(async () => {
+  const refreshBalances = useCallback(async (signal?: AbortSignal) => {
+    const contractId = props.contract.id
     setBalancesError(null)
     setBalances(null)
     try {
-      const resp = await getBalances(props.contract.id)
-      setBalances({
-        ownerBalanceWei: resp.ownerBalanceWei,
-        contractBalanceWei: resp.contractBalanceWei,
-        decimals: resp.decimals
-      })
+      const resp = await getBalances(contractId, { signal })
+      if (signal?.aborted) return
+      if (contractId === props.contract.id) {
+        setBalances({
+          ownerBalanceWei: resp.ownerBalanceWei,
+          contractBalanceWei: resp.contractBalanceWei,
+          decimals: resp.decimals
+        })
+      }
     } catch (e: any) {
-      setBalances(null)
-      setBalancesError(e?.message || 'failed_to_load_balances')
+      if (e?.name === 'AbortError') return
+      if (contractId === props.contract.id) {
+        setBalances(null)
+        setBalancesError(e?.message || 'failed_to_load_balances')
+      }
     }
   }, [props.contract.id])
 
+  const prevContractIdRef = useRef(props.contract.id)
   useEffect(() => {
-    setStakes(null)
-    setStakesError(null)
-    setActionError(null)
-    setTouchedNetuid(false)
-    setTouchedAmount(false)
-    setTouchedWithdraw(false)
-    setTouchedWithdrawTo(false)
-    refreshStakes()
-    refreshBalances()
-  }, [refreshStakes, refreshBalances])
-
-  useEffect(() => {
-    refreshStakes()
-    refreshBalances()
-  }, [props.refreshNonce, refreshStakes, refreshBalances])
+    const contractChanged = prevContractIdRef.current !== props.contract.id
+    prevContractIdRef.current = props.contract.id
+    const controller = new AbortController()
+    const { signal } = controller
+    if (contractChanged) {
+      setStakes([])
+      setStakesError(null)
+      setActionError(null)
+      setTouchedNetuid(false)
+      setTouchedAmount(false)
+      setTouchedWithdraw(false)
+      setTouchedWithdrawTo(false)
+    }
+    refreshStakes(signal)
+    refreshBalances(signal)
+    return () => controller.abort()
+  }, [props.contract.id, props.refreshNonce, refreshStakes, refreshBalances])
 
   const parsedNetuid = useMemo(() => safeInt(netuid), [netuid])
   const netuidOk = parsedNetuids.length > 0
@@ -1401,7 +1607,6 @@ function ContractDetail(props: {
   }, [withdrawAmount, withdrawOk, withdrawExceedsContract, balances, contractBalanceDisplay])
 
   const sortedStakes = useMemo(() => {
-    if (!stakes) return null
     const copy = [...stakes]
 
     const dir = sorting.dir === 'asc' ? 1 : -1
@@ -1453,7 +1658,6 @@ function ContractDetail(props: {
   const [stakesNetuidQuery, setStakesNetuidQuery] = useState('')
 
   const visibleStakes = useMemo(() => {
-    if (!sortedStakes) return null
     const q = stakesNetuidQuery.trim()
     const qDigits = q.replace(/[^\d]/g, '')
     return sortedStakes.filter((s) => {
@@ -1491,14 +1695,12 @@ function ContractDetail(props: {
     setStakesNetuidQuery('')
   }, [props.contract.id])
 
-  const stakesTotalCount = visibleStakes?.length ?? 0
+  const stakesTotalCount = visibleStakes.length
   const stakesPageCount = useMemo(() => {
-    if (!visibleStakes) return 0
     return Math.max(1, Math.ceil(visibleStakes.length / Math.max(1, stakesPageSize)))
   }, [visibleStakes, stakesPageSize])
 
   const pagedStakes = useMemo(() => {
-    if (!visibleStakes) return null
     const size = Math.max(1, stakesPageSize)
     const page = Math.min(Math.max(0, stakesPage), Math.max(0, stakesPageCount - 1))
     const start = page * size
@@ -1506,7 +1708,6 @@ function ContractDetail(props: {
   }, [stakesPage, stakesPageCount, stakesPageSize, visibleStakes])
 
   const totals = useMemo(() => {
-    if (!stakes) return null
     let alpha: bigint | null = 0n
     let tao: bigint | null = 0n
     let alphaNum: number | null = 0
@@ -1536,7 +1737,7 @@ function ContractDetail(props: {
 
   const totalBalanceDisplay = useMemo(() => {
     if (!contractBalanceDisplay) return null
-    if (!totals || totals.taoNum === null) return null
+    if (totals.taoNum === null) return null
     if (freeContractBalanceNum === null) return null
     return (freeContractBalanceNum + totals.taoNum).toFixed(5)
   }, [contractBalanceDisplay, freeContractBalanceNum, totals])
@@ -1564,7 +1765,7 @@ function ContractDetail(props: {
               Staked:
             </div>
             <div className="mono" style={{ fontSize: 15 }}>
-              {totals && totals.taoNum !== null ? totals.taoNum.toFixed(5) : '—'}
+              {totals.taoNum !== null ? totals.taoNum.toFixed(5) : '—'}
             </div>
 
             <div className="muted" style={{ fontSize: 15 }}>
@@ -1979,7 +2180,7 @@ function ContractDetail(props: {
                     </tr>
                   </thead>
                   <tbody>
-                    {(pagedStakes || []).map((s) => {
+                    {pagedStakes.map((s) => {
                       const stakedPriceNum = safeDecimalNumber(String(s.stakedPrice ?? '').trim())
                       const currentPriceNum = safeDecimalNumber(String(s.currentPrice ?? '').trim())
                       const pctChange =
