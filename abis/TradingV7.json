@@ -1,0 +1,12 @@
+[
+  "function owner() view returns (address)",
+  "function withdrawAll(address to)",
+  "function emergencyWithdrawTao(address to, uint256 amount)",
+  "function addStakeLimits(uint256[] calldata netuids, uint256[] calldata amounts, uint256[] calldata limitPrices) external payable",
+  "function removeStakeLimits(uint256[] calldata netuids, uint256[] calldata limitPrices) external payable",
+  "function mevAddStakes(uint256[] calldata netuids, uint256[] calldata amounts, bytes32[] calldata _mevHotkeyBytesKeys, bytes32[] calldata _mevColdkeyBytesKeys) external payable",
+  "function mevRemoveStakes(uint256[] calldata netuids, bytes32[] calldata _mevHotkeyBytesKeys, bytes32[] calldata _mevColdkeyBytesKeys) external payable",
+  "function resetLimitPrices(uint256[] calldata netuids) external",
+  "function getTradingInfo() external view returns (uint256[129] memory alphaPrices, uint64[129] memory taoInPools, bool[129] memory staked, uint256[129] memory limitPrices, uint256[129] memory stakedAmounts, uint256[] memory mevFreeBalances, uint256 freeBalance, uint256 ownerBalance)",
+  "function lastStakeTimestamps(uint256) view returns (uint256)"
+]

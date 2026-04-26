@@ -121,7 +121,7 @@ const dtaoSubnetsResponseSchema = z.union([
 ]);
 
 async function fetchDtaoSubnetsFromTaostats() {
-  const url = "https://taostats.io/api/dtao/dtaoSubnets?order=netuid_asc";
+  const url = "https://taostats.io/api/dtao/dtaoSubnets?order=market_cap_desc";
   let r: Awaited<ReturnType<typeof fetch>>;
   try {
     r = await fetchWithTimeout(url, {

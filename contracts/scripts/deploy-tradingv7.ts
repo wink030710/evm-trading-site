@@ -1,12 +1,11 @@
 import "dotenv/config";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import solc from "solc";
 import { ethers } from "ethers";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RPC_URL = "http://185.8.107.85:9944";
+const scriptDir = path.dirname(path.resolve(process.argv[1]));
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -20,29 +19,29 @@ function normalizePrivateKey(pk: string): string {
 }
 
 function findImports(importPath: string): { contents?: string; error?: string } {
-  const contractsPath = path.resolve(__dirname, "..", "contracts", importPath);
+  const contractsPath = path.resolve(scriptDir, "..", "contracts", importPath);
   if (fs.existsSync(contractsPath)) {
     return { contents: fs.readFileSync(contractsPath, "utf8") };
   }
-  const rootPath = path.resolve(__dirname, "..", importPath);
+  const rootPath = path.resolve(scriptDir, "..", importPath);
   if (fs.existsSync(rootPath)) {
     return { contents: fs.readFileSync(rootPath, "utf8") };
   }
-  const nmPath = path.resolve(__dirname, "..", "node_modules", importPath);
+  const nmPath = path.resolve(scriptDir, "..", "node_modules", importPath);
   if (fs.existsSync(nmPath)) {
     return { contents: fs.readFileSync(nmPath, "utf8") };
   }
   return { error: `Import not found: ${importPath}` };
 }
 
-function compileTradingV4(): { abi: ethers.InterfaceAbi; bytecode: string } {
-  const sourcePath = path.resolve(__dirname, "..", "contracts", "TradingV4.sol");
+function compileTradingV7(): { abi: ethers.InterfaceAbi; bytecode: string } {
+  const sourcePath = path.resolve(scriptDir, "..", "contracts", "TradingV7.sol");
   const source = fs.readFileSync(sourcePath, "utf8");
 
   const input = {
     language: "Solidity" as const,
     sources: {
-      "TradingV4.sol": { content: source },
+      "TradingV7.sol": { content: source },
     },
     settings: {
       optimizer: { enabled: true, runs: 1 },
@@ -71,8 +70,8 @@ function compileTradingV4(): { abi: ethers.InterfaceAbi; bytecode: string } {
     if (fatal.length) throw new Error("Solidity compilation failed");
   }
 
-  const contract = output.contracts?.["TradingV4.sol"]?.TradingV4;
-  if (!contract) throw new Error("TradingV4 not found in compiler output");
+  const contract = output.contracts?.["TradingV7.sol"]?.TradingV7;
+  if (!contract) throw new Error("TradingV7 not found in compiler output");
 
   return {
     abi: contract.abi as ethers.InterfaceAbi,
@@ -93,10 +92,10 @@ async function main(): Promise<void> {
   const bal = await provider.getBalance(wallet.address);
   console.log("Deployer balance:", ethers.formatEther(bal));
 
-  const { abi, bytecode } = compileTradingV4();
+  const { abi, bytecode } = compileTradingV7();
   const factory = new ethers.ContractFactory(abi, bytecode, wallet);
 
-  console.log("Deploying TradingV4...");
+  console.log("Deploying TradingV7...");
 
   const txOverrides: { gasLimit: number; gasPrice?: bigint } = {
     gasLimit: process.env.GAS_LIMIT ? Number(process.env.GAS_LIMIT) : 5_000_000,
@@ -114,7 +113,7 @@ async function main(): Promise<void> {
   console.log("Deployed at:", address);
   console.log("Block:", receipt!.blockNumber);
 
-  const outDir = path.resolve(__dirname, "..", "deployments");
+  const outDir = path.resolve(scriptDir, "..", "deployments");
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir);
 
   const out = {
@@ -126,7 +125,7 @@ async function main(): Promise<void> {
     deployedAt: new Date().toISOString(),
   };
 
-  const outFile = path.resolve(outDir, "bittensor-TradingV4.json");
+  const outFile = path.resolve(outDir, "bittensor-TradingV7.json");
   fs.writeFileSync(outFile, JSON.stringify(out, null, 2));
   console.log("Saved:", outFile);
 }

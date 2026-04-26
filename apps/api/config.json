@@ -1,7 +1,7 @@
 {
   "chain": {
     "chainId": 964,
-    "rpcUrl": "http://185.8.107.85:9944"
+    "rpcUrl": "http://127.0.0.1:9944"
   },
   "security": {
     "jwtIssuer": "evm-staking-site",

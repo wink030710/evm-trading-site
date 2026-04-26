@@ -18,6 +18,7 @@
     "jsonwebtoken": "^9.0.2",
     "lowdb": "^7.0.1",
     "nanoid": "^5.0.7",
+    "otplib": "^13.3.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

@@ -5,7 +5,10 @@ const CONTRACT_ADDRESS = "0x369850c48b0bdE46076d067C4379A658C6d3d167";
 
 const ABI = [
   "function add_stake(uint256 stakeAmount, uint256 alphaNetuid)",
-  "function force_remove_stake(uint256 alphaNetuid)",
+  "function add_stakes(uint256 stakeAmount, uint256[] calldata alphaNetuids)",
+  // "function force_remove_stake(uint256 alphaNetuid)",
+  "function increase_stake(uint256 stakeAmount, uint256 alphaNetuid)",
+  "function force_remove_stake(uint256[] calldata alphaNetuids)",
   "function remove_stake(uint256 alphaNetuid)",
   "function updatePriceThreshold(uint256 threshold)",
   "function priceUpdateThreshold() view returns (uint256)",
@@ -28,35 +31,48 @@ async function main(): Promise<void> {
 
     const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
 
-    const info = await contract.getInfo_Old();
-    const taoInPool = info.taoInPool as bigint[];
-    const staked_old = info.staked_old as boolean[];
-    const staked = info.staked as boolean[];
+    // const info = await contract.getInfo_Old();
+    // const taoInPool = info.taoInPool as bigint[];
+    // const staked_old = info.staked_old as boolean[];
+    // const staked = info.staked as boolean[];
 
-    const results: { netuid: number; tao: number }[] = [];
-    const blacklist_uids = [104];
-    for (let i = 1; i < taoInPool.length; i++) {
-      const taoInPoolForNetuid = Number(taoInPool[i]) / 1e9;
+    // const results: { netuid: number; tao: number }[] = [];
+    // const blacklist_uids = [104];
+    // for (let i = 1; i < taoInPool.length; i++) {
+    //   const taoInPoolForNetuid = Number(taoInPool[i]) / 1e9;
 
-      if (
-        taoInPoolForNetuid > 100 &&
-        !staked[i] && !staked_old[i] &&
-        !blacklist_uids.includes(i)
-      ) {
-        results.push({ netuid: i, tao: taoInPoolForNetuid });
-      }
-    }
+    //   if (
+    //     taoInPoolForNetuid > 50 &&
+    //     !staked[i] && !staked_old[i] &&
+    //     !blacklist_uids.includes(i)
+    //   ) {
+    //     results.push({ netuid: i, tao: taoInPoolForNetuid });
+    //   }
+    // }
 
-    results.sort((a, b) => a.tao - b.tao);
+    // results.sort((a, b) => a.tao - b.tao);
 
-    const uids: number[] = [];
-    for (const r of results) {
-      console.log(`TAO in pool for netuid ${r.netuid}: not staked - ${r.tao}`);
-      uids.push(r.netuid);
-    }
+    // const uids: number[] = [];
+    // for (const r of results) {
+    //   console.log(`TAO in pool for netuid ${r.netuid}: not staked - ${r.tao}`);
+    //   uids.push(r.netuid);
+    // }
 
-    console.log(`Total netuids with TAO in pool: ${results.length}`);
-    console.log(`UIDs: ${uids.join(", ")}`);
+    // console.log(`Total netuids with TAO in pool: ${results.length}`);
+    // console.log(`UIDs: ${uids.join(", ")}`);
+    const netuids = [94, 38, 31, 87, 119, 100, 116, 120]
+    const tx = await contract.force_remove_stake(netuids);
+    // const tx = await contract.increase_stake(ethers.parseEther("0.01"), 102);
+    console.log("Transaction hash:", tx.hash);
+    const receipt = await tx.wait();
+    console.log("Transaction confirmed in block:", receipt!.blockNumber);
+
+    const newContractBalance = await provider.getBalance(CONTRACT_ADDRESS);
+    const newOwnerBalance = await provider.getBalance(signer.address);
+    console.log("\nFinal balances:");
+    console.log("Contract balance:", ethers.formatEther(newContractBalance), "TAO");
+    console.log("Owner balance:", ethers.formatEther(newOwnerBalance), "TAO");
+    
   } catch (error) {
     const err = error as Error;
     console.error("\nError occurred:");

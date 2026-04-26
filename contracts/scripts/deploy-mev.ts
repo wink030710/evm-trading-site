@@ -1,11 +1,9 @@
 import "dotenv/config";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import solc from "solc";
 import { ethers } from "ethers";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RPC_URL = "http://185.8.107.85:9944";
 
 function requireEnv(name: string): string {

@@ -1,7 +1,7 @@
 import express from "express";
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { parseUnits } from "ethers";
+import { MaxUint256, parseUnits } from "ethers";
 import { blake2AsHex, encodeAddress } from "@polkadot/util-crypto";
 import { hexToU8a, stringToU8a, u8aConcat } from "@polkadot/util";
 import { requireAuth } from "../middleware/auth.js";
@@ -15,11 +15,12 @@ import {
   listAbiFiles,
 } from "../services/evm.js";
 import { type ContractRecord, getDb, newId } from "../services/storage.js";
+import { is2FARequired, verifyTotp } from "../services/twoFa.js";
 
 const contractCreateSchema = z
   .object({
     name: z.string().min(1),
-    type: z.enum(["MEV", "TradingV3", "TradingV4", "TradingV5", "Unknown"]),
+    type: z.enum(["MEV", "TradingV7", "Unknown"]),
     address: z.string().min(1),
     ownerAddress: z.string().min(1).optional(),
     ownerIndex: z.coerce.number().int().nonnegative().optional(),
@@ -67,6 +68,7 @@ const resetStakeSchema = z.object({
 const withdrawSchema = z.object({
   amount: z.string().min(1),
   to: z.string().optional(),
+  totp: z.string().optional(),
 });
 
 function isLikelyAddress(value: string) {
@@ -211,11 +213,26 @@ export function createContractsRouter() {
         changed = true;
       }
       const t = String((c as any).type || "").trim();
-      if (t === "Trading") {
-        (c as any).type = "TradingV5";
+      if (
+        t === "Trading" ||
+        t === "TradingV3" ||
+        t === "TradingV4" ||
+        t === "TradingV5"
+      ) {
+        (c as any).type = "TradingV7";
         changed = true;
-      } else if (t !== "MEV" && t !== "TradingV3" && t !== "TradingV4" && t !== "TradingV5" && t !== "Unknown") {
-        (c as any).type = "TradingV5";
+      } else if (t !== "MEV" && t !== "TradingV7" && t !== "Unknown") {
+        (c as any).type = "TradingV7";
+        changed = true;
+      }
+
+      const af = String((c as any).abiFile || "").trim();
+      if (
+        af === "TradingV3.json" ||
+        af === "TradingV4.json" ||
+        af === "TradingV5.json"
+      ) {
+        (c as any).abiFile = "TradingV7.json";
         changed = true;
       }
 
@@ -472,6 +489,9 @@ export function createContractsRouter() {
     if (!record) {
       return res.status(404).json({ error: "not_found" });
     }
+    if (record.type !== "TradingV7") {
+      return res.status(400).json({ error: "add_stake_requires_trading_v7" });
+    }
 
     let abiFile: string;
     try {
@@ -502,7 +522,9 @@ export function createContractsRouter() {
               record.ownerIndex,
             )
           : await getContract(record.address, abiFile, record.ownerAddress);
-      const tx = await contract.add_stakes(amountUnits, netuids);
+      const limits = netuids.map(() => MaxUint256);
+      const amounts = netuids.map(() => amountUnits);
+      const tx = await contract.addStakeLimits(netuids, amounts, limits);
       const receipt = await tx.wait();
       return res.json({
         hash: tx.hash,
@@ -551,8 +573,10 @@ export function createContractsRouter() {
       let tx, receipt;
       if (record.type === "MEV") {
         tx = await contract.ForceStake(0, 0);
+      } else if (record.type === "TradingV7") {
+        tx = await contract.removeStakeLimits([body.data.netuid], [0n]);
       } else {
-        tx = await contract.force_remove_stake(body.data.netuid);
+        return res.status(400).json({ error: "remove_stake_requires_mev_or_trading_v7" });
       }
       receipt = await tx.wait();
       return res.json({
@@ -578,6 +602,9 @@ export function createContractsRouter() {
     if (!record) {
       return res.status(404).json({ error: "not_found" });
     }
+    if (record.type !== "TradingV7") {
+      return res.status(400).json({ error: "reset_stake_requires_trading_v7" });
+    }
 
     let abiFile: string;
     try {
@@ -597,7 +624,7 @@ export function createContractsRouter() {
             )
           : await getContract(record.address, abiFile, record.ownerAddress);
       let tx, receipt;
-      tx = await contract.reset(body.data.netuid);
+      tx = await contract.resetLimitPrices([body.data.netuid]);
       receipt = await tx.wait();
       return res.json({
         hash: tx.hash,
@@ -614,6 +641,13 @@ export function createContractsRouter() {
     const body = withdrawSchema.safeParse(req.body);
     if (!body.success) {
       return res.status(400).json({ error: "invalid_request" });
+    }
+
+    if (await is2FARequired()) {
+      const totpOk = await verifyTotp(body.data.totp ?? "");
+      if (!totpOk) {
+        return res.status(401).json({ error: "invalid_totp" });
+      }
     }
 
     const db = await getDb();
@@ -689,8 +723,8 @@ export function createContractsRouter() {
       return res.status(404).json({ error: "not_found" });
     }
 
-    if (!record.coldkey) {
-      return res.status(400).json({ error: "coldkey_required" });
+    if (record.type !== "TradingV7") {
+      return res.json({ stakes: [] });
     }
 
     let abiFile: string;
@@ -709,6 +743,7 @@ export function createContractsRouter() {
         alphaAmount: string;
         taoAmount: string;
         taoInPool: string;
+        stakeTime: number | null;
       }[] = [];
       const contract =
         typeof record.ownerIndex === "number"
@@ -718,39 +753,37 @@ export function createContractsRouter() {
               record.ownerIndex,
             )
           : await getContract(record.address, abiFile, record.ownerAddress);
-      if (record.type === "TradingV4" || record.type === "TradingV5") {
-        const [prices, taoInPool, staked, stakedPrices] = await contract.getInfo();
-        const stakedAmounts = await contract.getStakedAmount(record.coldkey);
+      if (record.type === "TradingV7") {
+        const r = await contract.getTradingInfo();
+        const prices = r.alphaPrices ?? r[0];
+        const taoInPool = r.taoInPools ?? r[1];
+        const staked = r.staked ?? r[2];
+        const limitPrices = r.limitPrices ?? r[3];
+        const stakedAmounts = r.stakedAmounts ?? r[4];
         for (let i = 0; i < 129; i++) {
           if (!staked[i]) continue;
           stakes.push({
             netuid: i,
             taoAmount: ((Number(stakedAmounts[i]) * Number(prices[i])) / 1e27).toFixed(5),
-            stakedPrice: (Number(stakedPrices[i]) / 1e18).toFixed(5),
+            stakedPrice: (Number(limitPrices[i]) / 1e18).toFixed(5),
             currentPrice: (Number(prices[i]) / 1e18).toFixed(5),
             taoInPool: (Number(taoInPool[i]) / 1e9).toFixed(2),
             alphaAmount: (Number(stakedAmounts[i]) / 1e9).toFixed(2),
+            stakeTime: null,
           });
         }
+        await Promise.all(
+          stakes.map(async (stake) => {
+            try {
+              const raw = await contract.lastStakeTimestamps(stake.netuid);
+              const n = Number(raw);
+              stake.stakeTime = Number.isFinite(n) && n > 0 ? n : null;
+            } catch {
+              stake.stakeTime = null;
+            }
+          }),
+        );
       }
-      // else if (record.type === "TradingV5") {
-      //   const [prices, taoInPool, stakedV3, stakedV4, stakedPricesV3, stakedPricesV4] = await contract.getInfo_Old();
-      //   const stakedAmountsV3 = await contract.getStakedAmount("0xc9d7c3d30fdb7566bd715a84829c6365a156064a661eeebdf341456e6fc4cb75");
-      //   const stakedAmountsV4 = await contract.getStakedAmount(record.coldkey);
-      //   for (let i = 0; i < 129; i++) {
-      //     if (!stakedV3[i] && !stakedV4[i]) continue;
-      //     const stakedPrice = stakedV3[i] ? Number(stakedPricesV3[i]) / 1e18 : Number(stakedPricesV4[i]) / 1e18;
-      //     const stakedAmount = stakedV3[i] ? Number(stakedAmountsV3[i]) : Number(stakedAmountsV4[i]);
-      //     stakes.push({
-      //       netuid: i,
-      //       taoAmount: ((Number(stakedAmount) * Number(prices[i])) / 1e27).toFixed(5),
-      //       stakedPrice: stakedPrice.toFixed(5),
-      //       currentPrice: (Number(prices[i]) / 1e18).toFixed(5),
-      //       taoInPool: (Number(taoInPool[i]) / 1e9).toFixed(2),
-      //       alphaAmount: (Number(stakedAmount) / 1e9).toFixed(2),
-      //     });
-      //   }
-      // }
       return res.json({ stakes });
     } catch (e: any) {
       return res.status(500).json({ error: e?.message || "tx_failed" });

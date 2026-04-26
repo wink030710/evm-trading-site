@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 export type ContractRecord = {
   id: string
   name: string
-  type: 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'
+  type: 'MEV' | 'TradingV7' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -20,12 +20,20 @@ export type ContractRecord = {
   createdAt: string
 }
 
+export type TwoFaRecord = {
+  secret?: string
+  enabledAt?: string
+  pendingSecret?: string
+  pendingExpiresAt?: number
+}
+
 type DbSchema = {
   contracts: ContractRecord[]
   subnetIdentity?: {
     updatedAt: string
     data: any[]
   }
+  twoFa?: TwoFaRecord
 }
 
 const defaultData: DbSchema = {

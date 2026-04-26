@@ -5,7 +5,7 @@ export type ApiError = {
 export type ContractRecord = {
   id: string
   name: string
-  type: 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'
+  type: 'MEV' | 'TradingV7' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -101,10 +101,35 @@ async function request<T>(path: string, init?: RequestInit, opts?: RequestOption
   }
 }
 
-export async function login(username: string, password: string) {
+export async function get2FARequired(): Promise<{ required: boolean }> {
+  return request<{ required: boolean }>('/auth/2fa-required')
+}
+
+export async function twoFaSetupStart(currentTotp?: string): Promise<{ uri: string; secret: string }> {
+  return request<{ uri: string; secret: string }>('/auth/2fa/setup-start', {
+    method: 'POST',
+    body: JSON.stringify(currentTotp != null ? { currentTotp } : {})
+  })
+}
+
+export async function twoFaSetupConfirm(totp: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/auth/2fa/setup-confirm', {
+    method: 'POST',
+    body: JSON.stringify({ totp })
+  })
+}
+
+export async function twoFaDisable(totp: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/auth/2fa/disable', {
+    method: 'POST',
+    body: JSON.stringify({ totp })
+  })
+}
+
+export async function login(username: string, password: string, totp?: string) {
   return request<{ token: string }>('/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ username, password })
+    body: JSON.stringify({ username, password, ...(totp !== undefined && totp !== '' ? { totp } : {}) })
   })
 }
 
@@ -122,7 +147,7 @@ export async function listAbiFiles() {
 
 export async function createContract(input: {
   name: string
-  type: 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'
+  type: 'MEV' | 'TradingV7' | 'Unknown'
   address: string
   ownerAddress: string
   ownerIndex?: number
@@ -181,7 +206,7 @@ export async function resetStake(id: string, input: { netuid: number }) {
   })
 }
 
-export async function withdraw(id: string, input: { amount: string; to?: string }) {
+export async function withdraw(id: string, input: { amount: string; to?: string; totp?: string }) {
   return request<TxResponse>(`/contracts/${id}/withdraw`, {
     method: 'POST',
     body: JSON.stringify(input)
@@ -195,6 +220,7 @@ export type StakeRow = {
   taoInPool?: string
   stakedPrice?: string
   currentPrice?: string
+  stakeTime?: number | null
 }
 
 export async function listStakes(id: string, init?: RequestInit) {

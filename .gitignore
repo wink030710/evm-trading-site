@@ -12,3 +12,4 @@ apps/web/.env
 
 # local api db
 apps/api/data/db.json
+cherry_teams.json

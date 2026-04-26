@@ -36,6 +36,7 @@ export function createTransactionsRouter() {
         headers: {
           Accept: "application/json",
           "User-Agent": "evm-trading-site/1.0",
+          "X-Bot-Gate-Token": "token"
         },
       });
       const text = await r.text();

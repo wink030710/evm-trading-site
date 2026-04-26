@@ -2,6 +2,7 @@
   "name": "@evm-trading/contracts",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "compile": "hardhat compile",
     "deploy:base": "hardhat run scripts/deploy.ts --network base",

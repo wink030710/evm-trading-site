@@ -6,7 +6,8 @@
   ],
   "scripts": {
     "dev": "concurrently -n api,web -c green,blue \"npm run dev --workspace apps/api\" \"npm run dev --workspace apps/web\"",
-    "build": "npm run build --workspace apps/api && npm run build --workspace apps/web"
+    "build": "npm run build --workspace apps/api && npm run build --workspace apps/web",
+    "cherry:teams": "tsx scripts/cherry-teams.ts"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"

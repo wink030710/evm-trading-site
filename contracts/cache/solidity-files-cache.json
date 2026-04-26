@@ -977,6 +977,332 @@
       "artifacts": [
         "BittensorReceiver"
       ]
+    },
+    "/root/bittensor/evm-trading-site/contracts/contracts/TradingV6.sol": {
+      "lastModificationDate": 1777140995102,
+      "contentHash": "51b38efb88a12a5fef46cae0e9983633",
+      "sourceName": "contracts/TradingV6.sol",
+      "solcConfig": {
+        "version": "0.8.22",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/security/ReentrancyGuard.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "AlphaMath",
+        "IAlpha",
+        "IStaking",
+        "TradingV6"
+      ]
+    },
+    "/root/bittensor/evm-trading-site/contracts/node_modules/@openzeppelin/contracts/security/ReentrancyGuard.sol": {
+      "lastModificationDate": 1773603764685,
+      "contentHash": "1535f8c0c68463f8c1b5239f7584e71f",
+      "sourceName": "@openzeppelin/contracts/security/ReentrancyGuard.sol",
+      "solcConfig": {
+        "version": "0.8.22",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.0"
+      ],
+      "artifacts": [
+        "ReentrancyGuard"
+      ]
+    },
+    "/root/bittensor/evm-trading-site/contracts/contracts/TradingV5.sol": {
+      "lastModificationDate": 1773799139749,
+      "contentHash": "2d8572e143873760c342fb06932c1f60",
+      "sourceName": "contracts/TradingV5.sol",
+      "solcConfig": {
+        "version": "0.8.22",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/security/ReentrancyGuard.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "AlphaMath",
+        "IAlpha",
+        "IStaking",
+        "TradingV4",
+        "TradingV5"
+      ]
+    },
+    "/root/bittensor/evm-trading-site/contracts/contracts/TradingV4.sol": {
+      "lastModificationDate": 1773799140799,
+      "contentHash": "d323badc85c3409feb41b6fc4a7769f3",
+      "sourceName": "contracts/TradingV4.sol",
+      "solcConfig": {
+        "version": "0.8.22",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/security/ReentrancyGuard.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "AlphaMath",
+        "IAlpha",
+        "IStaking",
+        "TradingV3",
+        "TradingV4"
+      ]
+    },
+    "/root/bittensor/evm-trading-site/contracts/contracts/Mev.sol": {
+      "lastModificationDate": 1776620537364,
+      "contentHash": "a59cf26c1cfa35b362fc40cd3fdc93e7",
+      "sourceName": "contracts/Mev.sol",
+      "solcConfig": {
+        "version": "0.8.22",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/security/ReentrancyGuard.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "AlphaMath",
+        "IAlpha",
+        "IStaking",
+        "Mev"
+      ]
+    },
+    "/root/bittensor/evm-trading-site/contracts/contracts/Monitor.sol": {
+      "lastModificationDate": 1776267860999,
+      "contentHash": "eeb1f4cbd440712158c57bb6cd1538ef",
+      "sourceName": "contracts/Monitor.sol",
+      "solcConfig": {
+        "version": "0.8.22",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "IStaking",
+        "Monitor"
+      ]
+    },
+    "/root/bittensor/evm-trading-site/contracts/contracts/TradingV7.sol": {
+      "lastModificationDate": 1777164766552,
+      "contentHash": "fba37d9682f0d0edb5ff54be69572d5c",
+      "sourceName": "contracts/TradingV7.sol",
+      "solcConfig": {
+        "version": "0.8.22",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/security/ReentrancyGuard.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "IAlpha",
+        "IStaking",
+        "TradingV7"
+      ]
+    },
+    "/root/bittensor/evm-trading-site/contracts/contracts/TradingV7_3.sol": {
+      "lastModificationDate": 1777157377165,
+      "contentHash": "0870e1311276fdc4cb0b1e35559564c9",
+      "sourceName": "contracts/TradingV7_3.sol",
+      "solcConfig": {
+        "version": "0.8.22",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/security/ReentrancyGuard.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "AlphaMath",
+        "IAlpha",
+        "IStaking",
+        "TradingV6"
+      ]
     }
   }
 }

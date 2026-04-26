@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
+import { QRCodeSVG } from 'qrcode.react'
 import {
   addStake,
   clearToken,
@@ -17,6 +18,7 @@ import {
   listOwners,
   listStakes,
   listDelegateTransactions,
+  get2FARequired,
   login,
   openLogsStream,
   refreshSubnetIdentity,
@@ -26,6 +28,9 @@ import {
   resetStake,
   setApiErrorNotifier,
   setToken,
+  twoFaDisable,
+  twoFaSetupConfirm,
+  twoFaSetupStart,
   withdraw,
   type ContractRecord,
   type DtaoSubnetRow,
@@ -223,6 +228,7 @@ export function App() {
               <NavLink to="/transactions" className={({ isActive }) => `navLink ${isActive ? 'navLinkActive' : ''}`}>Transactions</NavLink>
               <NavLink to="/subnets" className={({ isActive }) => `navLink ${isActive ? 'navLinkActive' : ''}`}>Subnets</NavLink>
               <NavLink to="/logs" className={({ isActive }) => `navLink ${isActive ? 'navLinkActive' : ''}`}>Logs</NavLink>
+              <NavLink to="/security" className={({ isActive }) => `navLink ${isActive ? 'navLinkActive' : ''}`}>Security</NavLink>
             </nav>
             <div className="appHeaderActions">
               <button
@@ -272,6 +278,7 @@ export function App() {
             <Route path="/transactions" element={<TransactionsView onError={onError} onSuccess={(m) => notify('success', m)} subnetByNetuid={subnetByNetuid} />} />
             <Route path="/subnets" element={<SubnetsView onError={onError} subnetByNetuid={subnetByNetuid} />} />
             <Route path="/logs" element={<div className="layoutSingle"><LogsView onError={onError} confirm={confirm} /></div>} />
+            <Route path="/security" element={<SecurityView onError={onError} onSuccess={(m) => notify('success', m)} />} />
           </Routes>
           {confirmState ? (
             <ConfirmDialog
@@ -304,8 +311,16 @@ export function App() {
 function Login(props: { onLoggedIn: () => void; onError: (e: string | null) => void }) {
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
+  const [totp, setTotp] = useState('')
+  const [twoFaRequired, setTwoFaRequired] = useState(false)
   const [loading, setLoading] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
+
+  useEffect(() => {
+    get2FARequired()
+      .then((r) => setTwoFaRequired(r.required))
+      .catch(() => setTwoFaRequired(false))
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -317,13 +332,18 @@ function Login(props: { onLoggedIn: () => void; onError: (e: string | null) => v
       setLocalError('username and password are required')
       return
     }
+    if (twoFaRequired && !totp.trim()) {
+      setLocalError('2FA code is required')
+      return
+    }
     setLoading(true)
     try {
-      const resp = await login(u, p)
+      const resp = await login(u, p, twoFaRequired ? totp.trim() : undefined)
       setToken(resp.token)
       props.onLoggedIn()
     } catch (err: any) {
-      props.onError(err?.message || 'login_failed')
+      const msg = err?.message || 'login_failed'
+      props.onError(msg === 'invalid_totp' ? 'Invalid 2FA code' : msg)
     } finally {
       setLoading(false)
     }
@@ -349,6 +369,23 @@ function Login(props: { onLoggedIn: () => void; onError: (e: string | null) => v
           autoComplete="current-password"
         />
 
+        {twoFaRequired ? (
+          <>
+            <div className="spacer12" />
+            <div className="label">2FA code (Google Authenticator)</div>
+            <input
+              className="input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              maxLength={8}
+              value={totp}
+              onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
+            />
+          </>
+        ) : null}
+
         {localError ? <div className="errorText">{localError}</div> : null}
 
         <div className="spacer16" />
@@ -356,6 +393,288 @@ function Login(props: { onLoggedIn: () => void; onError: (e: string | null) => v
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
+    </div>
+  )
+}
+
+function SecurityView(props: { onError: (e: string | null) => void; onSuccess: (message: string) => void }) {
+  const [twoFaEnabled, setTwoFaEnabled] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [step, setStep] = useState<'idle' | 'enter_current' | 'enter_disable' | 'show_qr' | 'success'>('idle')
+  const [currentTotp, setCurrentTotp] = useState('')
+  const [disableTotp, setDisableTotp] = useState('')
+  const [confirmTotp, setConfirmTotp] = useState('')
+  const [setupUri, setSetupUri] = useState('')
+  const [setupSecret, setSetupSecret] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const loadRequired = useCallback(() => {
+    setLoading(true)
+    setError(null)
+    get2FARequired()
+      .then((r) => setTwoFaEnabled(r.required))
+      .catch(() => setTwoFaEnabled(false))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadRequired()
+  }, [loadRequired])
+
+  const startEnable = async () => {
+    setError(null)
+    setSubmitting(true)
+    try {
+      const r = await twoFaSetupStart()
+      setSetupUri(r.uri)
+      setSetupSecret(r.secret)
+      setStep('show_qr')
+    } catch (e: any) {
+      const msg = e?.message || 'Failed to start setup'
+      setError(msg)
+      props.onError(msg)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const startChange = () => {
+    setError(null)
+    setCurrentTotp('')
+    setStep('enter_current')
+  }
+
+  const submitCurrentAndShowQr = async () => {
+    const code = currentTotp.trim()
+    if (!code) {
+      setError('Enter your current 2FA code')
+      return
+    }
+    setError(null)
+    setSubmitting(true)
+    try {
+      const r = await twoFaSetupStart(code)
+      setSetupUri(r.uri)
+      setSetupSecret(r.secret)
+      setStep('show_qr')
+      setCurrentTotp('')
+    } catch (e: any) {
+      const msg = e?.message || 'invalid_totp'
+      const display = msg === 'invalid_totp' ? 'Invalid current 2FA code' : msg
+      setError(display)
+      props.onError(display)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const confirmSetup = async () => {
+    const code = confirmTotp.trim()
+    if (!code || code.length < 6) {
+      setError('Enter the 6-digit code from your app')
+      return
+    }
+    setError(null)
+    setSubmitting(true)
+    try {
+      await twoFaSetupConfirm(code)
+      setStep('success')
+      setConfirmTotp('')
+      setSetupUri('')
+      setSetupSecret('')
+      loadRequired()
+      props.onSuccess('2FA has been enabled')
+    } catch (e: any) {
+      const msg = e?.message || 'invalid_totp'
+      const display = msg === 'invalid_totp' ? 'Invalid code. Scan the QR code and enter the code from your app.' : msg
+      setError(display)
+      props.onError(display)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const startDisable = () => {
+    setError(null)
+    setDisableTotp('')
+    setStep('enter_disable')
+  }
+
+  const submitDisable = async () => {
+    const code = disableTotp.trim()
+    if (!code) {
+      setError('Enter your current 2FA code')
+      return
+    }
+    setError(null)
+    setSubmitting(true)
+    try {
+      await twoFaDisable(code)
+      setStep('idle')
+      setDisableTotp('')
+      loadRequired()
+      props.onSuccess('2FA has been disabled')
+    } catch (e: any) {
+      const msg = e?.message || 'invalid_totp'
+      const display = msg === 'invalid_totp' ? 'Invalid 2FA code' : msg
+      setError(display)
+      props.onError(display)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const backToIdle = () => {
+    setStep('idle')
+    setError(null)
+    setCurrentTotp('')
+    setDisableTotp('')
+    setConfirmTotp('')
+    setSetupUri('')
+    setSetupSecret('')
+  }
+
+  if (loading) {
+    return (
+      <div className="layoutSingle">
+        <div className="card">
+          <p className="muted">Loading…</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="layoutSingle">
+      <div className="card">
+        <h2 className="h1" style={{ margin: 0 }}>Security</h2>
+        <div className="muted" style={{ marginTop: 8 }}>
+          Two-factor authentication (2FA) for login and withdraw. Use an app like Google Authenticator and scan the QR code.
+        </div>
+        <div className="spacer16" />
+
+        {step === 'idle' && (
+          <>
+            <p>
+              {twoFaEnabled ? (
+                <>2FA is <strong>enabled</strong>. You can change it or disable it (you will need your current 2FA code).</>
+              ) : (
+                <>2FA is <strong>not enabled</strong>. Enable it to require a code at login and when withdrawing.</>
+              )}
+            </p>
+            <div className="spacer12" />
+            <div className="rowWrap" style={{ gap: 8 }}>
+              {twoFaEnabled ? (
+                <>
+                  <button type="button" className="btn" onClick={startChange} disabled={submitting}>
+                    Change 2FA
+                  </button>
+                  <button type="button" className="btn btnDanger" onClick={startDisable} disabled={submitting}>
+                    Disable 2FA
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn btnPrimary" onClick={startEnable} disabled={submitting}>
+                  {submitting ? 'Starting…' : 'Enable 2FA'}
+                </button>
+              )}
+            </div>
+          </>
+        )}
+
+        {step === 'enter_disable' && (
+          <>
+            <div className="label">Enter current 2FA code to disable</div>
+            <p className="muted">You will no longer be asked for a code at login or withdraw.</p>
+            <div className="spacer12" />
+            <input
+              className="input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              maxLength={8}
+              value={disableTotp}
+              onChange={(e) => setDisableTotp(e.target.value.replace(/\D/g, ''))}
+            />
+            {error ? <div className="errorText" style={{ marginTop: 8 }}>{error}</div> : null}
+            <div className="spacer12" />
+            <div className="rowWrap" style={{ gap: 8 }}>
+              <button type="button" className="btn" onClick={backToIdle} disabled={submitting}>Cancel</button>
+              <button type="button" className="btn btnDanger" onClick={submitDisable} disabled={submitting}>
+                {submitting ? 'Disabling…' : 'Disable 2FA'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 'enter_current' && (
+          <>
+            <div className="label">Enter current 2FA code</div>
+            <p className="muted">To change 2FA, enter the code from your authenticator app.</p>
+            <div className="spacer12" />
+            <input
+              className="input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              maxLength={8}
+              value={currentTotp}
+              onChange={(e) => setCurrentTotp(e.target.value.replace(/\D/g, ''))}
+            />
+            {error ? <div className="errorText" style={{ marginTop: 8 }}>{error}</div> : null}
+            <div className="spacer12" />
+            <div className="rowWrap" style={{ gap: 8 }}>
+              <button type="button" className="btn" onClick={backToIdle} disabled={submitting}>Cancel</button>
+              <button type="button" className="btn btnPrimary" onClick={submitCurrentAndShowQr} disabled={submitting}>
+                {submitting ? 'Verifying…' : 'Continue'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 'show_qr' && (
+          <>
+            <p><strong>Scan this QR code</strong> with Google Authenticator (or another TOTP app):</p>
+            <div className="spacer12" />
+            <div style={{ padding: 16, background: '#fff', borderRadius: 8, display: 'inline-block' }}>
+              <QRCodeSVG value={setupUri} size={200} level="M" />
+            </div>
+            <div className="spacer12" />
+            <p className="muted">If you can&apos;t scan, enter this secret manually: <code className="mono" style={{ fontSize: 12 }}>{setupSecret}</code></p>
+            <div className="spacer16" />
+            <div className="label">Enter the 6-digit code from your app</div>
+            <input
+              className="input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              maxLength={8}
+              value={confirmTotp}
+              onChange={(e) => setConfirmTotp(e.target.value.replace(/\D/g, ''))}
+            />
+            {error ? <div className="errorText" style={{ marginTop: 8 }}>{error}</div> : null}
+            <div className="spacer12" />
+            <div className="rowWrap" style={{ gap: 8 }}>
+              <button type="button" className="btn" onClick={backToIdle} disabled={submitting}>Cancel</button>
+              <button type="button" className="btn btnPrimary" onClick={confirmSetup} disabled={submitting || confirmTotp.length < 6}>
+                {submitting ? 'Verifying…' : 'Confirm and enable 2FA'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 'success' && (
+          <>
+            <p className="successText">2FA has been enabled. You will need your authenticator code when logging in and when withdrawing.</p>
+            <div className="spacer12" />
+            <button type="button" className="btn" onClick={backToIdle}>Done</button>
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -647,6 +966,7 @@ type DashboardRow = {
   type: string
   ss58?: string
   ownerAddress: string
+  stakesCount: number | null
   total: number | null
   free: number | null
   staked: number | null
@@ -925,12 +1245,12 @@ function SubnetsView(props: { onError: (e: string | null) => void; subnetByNetui
                       <td className="mono num">{fmt(r.incentive_burn, 'pct3')}</td>
                       <td>
                         {r.is_immune === true ? (
-                          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" title="Immune">
+                          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <circle cx="12" cy="12" r="10" />
                             <path d="M9 12l2 2 4-4" />
                           </svg>
                         ) : r.is_immune === false ? (
-                          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" title="Not immune" className="muted">
+                          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="muted">
                             <circle cx="12" cy="12" r="10" />
                             <path d="M15 9l-6 6M9 9l6 6" />
                           </svg>
@@ -1290,6 +1610,7 @@ function Dashboard(props: { onError: (e: string | null) => void }) {
                 type: c.type,
                 ss58: c.ss58,
                 ownerAddress: c.ownerAddress,
+                stakesCount: Array.isArray(stakesResp.stakes) ? stakesResp.stakes.length : 0,
                 total: totalNum,
                 free: freeNum,
                 staked: stakedNum,
@@ -1302,6 +1623,7 @@ function Dashboard(props: { onError: (e: string | null) => void }) {
                 type: c.type,
                 ss58: c.ss58,
                 ownerAddress: c.ownerAddress,
+                stakesCount: null,
                 total: null,
                 free: null,
                 staked: null,
@@ -1328,10 +1650,12 @@ function Dashboard(props: { onError: (e: string | null) => void }) {
     let free = 0
     let staked = 0
     let fee = 0
+    let stakesCount = 0
     const seenOwners = new Set<string>()
     for (const r of rows) {
       if (r.free !== null) free += r.free
       if (r.staked !== null) staked += r.staked
+      if (r.stakesCount !== null) stakesCount += r.stakesCount
       const ownerKey = String(r.ownerAddress || '').toLowerCase()
       if (r.fee !== null && ownerKey && !seenOwners.has(ownerKey)) {
         seenOwners.add(ownerKey)
@@ -1340,7 +1664,7 @@ function Dashboard(props: { onError: (e: string | null) => void }) {
     }
     // Avoid rounding drift by deriving Total from summed Free + summed Staked.
     const total = free + staked
-    return { total, free, staked, fee }
+    return { total, free, staked, fee, stakesCount }
   }, [rows])
 
   const fmt = (n: number | null) => (n !== null ? n.toFixed(5) : '—')
@@ -1375,6 +1699,7 @@ function Dashboard(props: { onError: (e: string | null) => void }) {
                   <th>Contract</th>
                   <th>Type</th>
                   <th>TX</th>
+                  <th className="num">Stakes</th>
                   <th className="num">Total</th>
                   <th className="num">Free</th>
                   <th className="num">Staked</th>
@@ -1419,6 +1744,7 @@ function Dashboard(props: { onError: (e: string | null) => void }) {
                         <span className="muted">—</span>
                       )}
                     </td>
+                    <td className="mono num">{r.stakesCount === null ? '—' : r.stakesCount}</td>
                     <td className="mono num">{fmt(r.total)}</td>
                     <td className="mono num">{fmt(r.free)}</td>
                     <td className="mono num">{fmt(r.staked)}</td>
@@ -1431,6 +1757,7 @@ function Dashboard(props: { onError: (e: string | null) => void }) {
                   <th>Total</th>
                   <th aria-hidden="true" />
                   <th aria-hidden="true" />
+                  <th className="mono num">{sums.stakesCount}</th>
                   <th className="mono num">{sums.total.toFixed(5)}</th>
                   <th className="mono num">{sums.free.toFixed(5)}</th>
                   <th className="mono num">{sums.staked.toFixed(5)}</th>
@@ -1794,7 +2121,7 @@ function ContractsView(props: {
             confirm={props.confirm}
             onCreate={async (input: {
               name: string
-              type: 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'
+              type: 'MEV' | 'TradingV7' | 'Unknown'
               address: string
               ownerAddress: string
               ownerIndex?: number
@@ -2022,7 +2349,7 @@ function ContractCreate(props: {
   confirm: (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>
   onCreate: (input: {
     name: string
-    type: 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'
+    type: 'MEV' | 'TradingV7' | 'Unknown'
     address: string
     ownerAddress: string
     ownerIndex?: number
@@ -2033,7 +2360,7 @@ function ContractCreate(props: {
   }) => Promise<void>
 }) {
   const [name, setName] = useState('')
-  const [type, setType] = useState<'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown'>('TradingV5')
+  const [type, setType] = useState<'MEV' | 'TradingV7' | 'Unknown'>('TradingV7')
   const [address, setAddress] = useState('')
   const [ownerIndex, setOwnerIndex] = useState<string>('')
   const [withdrawerIndex, setWithdrawerIndex] = useState<string>('')
@@ -2113,11 +2440,9 @@ function ContractCreate(props: {
         className="input"
         value={type}
         disabled={props.disabled || props.creating}
-        onChange={(e) => setType(e.target.value as 'MEV' | 'TradingV3' | 'TradingV4' | 'TradingV5' | 'Unknown')}
+        onChange={(e) => setType(e.target.value as 'MEV' | 'TradingV7' | 'Unknown')}
       >
-        <option value="TradingV3">TradingV3</option>
-        <option value="TradingV4">TradingV4</option>
-        <option value="TradingV5">TradingV5</option>
+        <option value="TradingV7">TradingV7</option>
         <option value="MEV">MEV</option>
         <option value="Unknown">Unknown</option>
       </select>
@@ -2255,7 +2580,7 @@ function ContractCreate(props: {
             // coldkey + ss58 are derived on the backend from the contract address
           })
           setName('')
-          setType('TradingV5')
+          setType('TradingV7')
           setAddress('')
           setOwnerIndex('')
           setWithdrawerIndex('')
@@ -2282,6 +2607,14 @@ function ContractDetail(props: {
   const [amount, setAmount] = useState('')
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [withdrawTo, setWithdrawTo] = useState('')
+  const [withdrawTotp, setWithdrawTotp] = useState('')
+  const [twoFaRequired, setTwoFaRequired] = useState(false)
+
+  useEffect(() => {
+    get2FARequired()
+      .then((r) => setTwoFaRequired(r.required))
+      .catch(() => setTwoFaRequired(false))
+  }, [])
 
   const parsedNetuids = useMemo(() => {
     const raw = netuid.trim()
@@ -2305,6 +2638,8 @@ function ContractDetail(props: {
   const [submitting, setSubmitting] = useState<'add' | 'remove' | 'reset' | 'withdraw' | null>(null)
 
   const actionsDisabled = submitting !== null
+  const canAddOrResetStake = props.contract.type === 'TradingV7'
+  const canRemoveStake = props.contract.type === 'MEV' || props.contract.type === 'TradingV7'
 
   useEffect(() => {
     props.setGlobalBusy(actionsDisabled)
@@ -2320,7 +2655,7 @@ function ContractDetail(props: {
     decimals: number
   }>(null)
   const [balancesError, setBalancesError] = useState<string | null>(null)
-  const [sorting, setSorting] = useState<{ key: 'netuid' | 'alpha' | 'tao' | 'pool' | 'pct'; dir: 'asc' | 'desc' }>({
+  const [sorting, setSorting] = useState<{ key: 'netuid' | 'alpha' | 'tao' | 'pool' | 'pct' | 'time'; dir: 'asc' | 'desc' }>({
     key: 'tao',
     dir: 'desc'
   })
@@ -2498,6 +2833,15 @@ function ContractDetail(props: {
         return 0
       }
 
+      if (sorting.key === 'time') {
+        const at = typeof a.stakeTime === 'number' && Number.isFinite(a.stakeTime) ? a.stakeTime : null
+        const bt = typeof b.stakeTime === 'number' && Number.isFinite(b.stakeTime) ? b.stakeTime : null
+        if (at === null && bt === null) return 0
+        if (at === null) return 1
+        if (bt === null) return -1
+        return (at === bt ? 0 : at > bt ? 1 : -1) * dir
+      }
+
       const av = sorting.key === 'alpha' ? a.alphaAmount : a.taoAmount
       const bv = sorting.key === 'alpha' ? b.alphaAmount : b.taoAmount
       const abi = safeBigInt(av)
@@ -2652,7 +2996,7 @@ function ContractDetail(props: {
               <input
                 className={`input ${touchedNetuid && netuidError ? 'inputError' : ''}`}
                 value={netuid}
-                disabled={actionsDisabled}
+                disabled={actionsDisabled || !canAddOrResetStake}
                 onChange={(e) => {
                   setTouchedNetuid(true)
                   setNetuid(e.target.value)
@@ -2669,7 +3013,7 @@ function ContractDetail(props: {
               <input
                 className={`input ${touchedAmount && amountError ? 'inputError' : ''}`}
                 value={amount}
-                disabled={actionsDisabled}
+                disabled={actionsDisabled || !canAddOrResetStake}
                 onChange={(e) => {
                   setTouchedAmount(true)
                   setAmount(e.target.value)
@@ -2690,7 +3034,7 @@ function ContractDetail(props: {
           <div className="rowWrap">
             <button
               className="btn btnPrimary"
-              disabled={actionsDisabled}
+              disabled={actionsDisabled || !canAddOrResetStake}
               onClick={async () => {
                 props.onError(null)
                 setActionError(null)
@@ -2793,6 +3137,24 @@ function ContractDetail(props: {
             {touchedWithdraw && withdrawAmountError ? <div className="errorText">{withdrawAmountError}</div> : null}
           </div>
 
+          {twoFaRequired ? (
+            <>
+              <div className="spacer12" />
+              <div className="label">2FA code (required for withdraw)</div>
+              <input
+                className="input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="000000"
+                maxLength={8}
+                value={withdrawTotp}
+                disabled={actionsDisabled}
+                onChange={(e) => setWithdrawTotp(e.target.value.replace(/\D/g, ''))}
+              />
+            </>
+          ) : null}
+
           <div className="spacer12" />
           <button
             className="btn"
@@ -2806,6 +3168,10 @@ function ContractDetail(props: {
               setTouchedWithdrawTo(true)
               if (withdrawToError || withdrawAmountError) return
               if (!withdrawToOk) return
+              if (twoFaRequired && !withdrawTotp.trim()) {
+                setActionError('2FA code is required for withdraw')
+                return
+              }
 
               let nextBalances = balances
               if (!nextBalances) {
@@ -2843,7 +3209,8 @@ function ContractDetail(props: {
               try {
                 const resp = await withdraw(props.contract.id, {
                   amount: normalizeDecimal(withdrawAmount),
-                  to: withdrawToValue
+                  to: withdrawToValue,
+                  ...(twoFaRequired ? { totp: withdrawTotp.trim() } : {})
                 })
                 props.requestRefresh()
                 const hash =
@@ -2851,10 +3218,16 @@ function ContractDetail(props: {
                     ? (resp as any).hash
                     : null
                 props.onSuccess(hash ? `Withdraw submitted (${shortHash(hash)})` : 'Withdraw submitted')
+                if (twoFaRequired) setWithdrawTotp('')
               } catch (e: any) {
                 const msg = e?.message || 'withdraw_failed'
-                props.onError(msg)
-                setActionError(msg)
+                if (msg === 'invalid_totp') {
+                  props.onError('Invalid 2FA code')
+                  setActionError('Invalid 2FA code')
+                } else {
+                  props.onError(msg)
+                  setActionError(msg)
+                }
               } finally {
                 setSubmitting(null)
               }
@@ -2968,7 +3341,7 @@ function ContractDetail(props: {
               ) : null}
 
               <div style={{ overflowX: 'auto' }}>
-                <table className="table" style={{ width: '100%', minWidth: 860 }}>
+                <table className="table" style={{ width: '100%', minWidth: 920 }}>
                   <thead>
                     <tr>
                       <th>
@@ -3045,6 +3418,20 @@ function ContractDetail(props: {
                           Pool{sorting.key === 'pool' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </button>
                       </th>
+                      <th style={{ textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          className="tableHeaderBtn"
+                          disabled={actionsDisabled}
+                          onClick={() =>
+                            setSorting((s) =>
+                              s.key === 'time' ? { key: 'time', dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: 'time', dir: 'desc' }
+                            )
+                          }
+                        >
+                          Stake Time{sorting.key === 'time' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </button>
+                      </th>
                       <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
                   </thead>
@@ -3079,12 +3466,19 @@ function ContractDetail(props: {
                           <td className="mono" style={{ textAlign: 'right' }}>
                             {s.taoInPool ?? '-'}
                           </td>
+                          <td
+                            className="mono"
+                            style={{ textAlign: 'right', whiteSpace: 'nowrap' }}
+                            title={formatStakeTimestampIso(s.stakeTime)}
+                          >
+                            {formatStakeTimestamp(s.stakeTime)}
+                          </td>
                           <td style={{ textAlign: 'right' }}>
                             <button
                               type="button"
                               className="btn btnTiny"
                               style={{ marginRight: 8 }}
-                              disabled={actionsDisabled}
+                              disabled={actionsDisabled || !canAddOrResetStake}
                               onClick={async (e) => {
                                 e.preventDefault()
                                 props.onError(null)
@@ -3124,7 +3518,7 @@ function ContractDetail(props: {
                             <button
                               type="button"
                               className="btn btnDanger btnTiny"
-                              disabled={actionsDisabled}
+                              disabled={actionsDisabled || !canRemoveStake}
                               onClick={async (e) => {
                                 e.preventDefault()
                                 props.onError(null)
@@ -3218,6 +3612,42 @@ function formatContractDate(iso: string | undefined): string {
     return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
   } catch {
     return '—'
+  }
+}
+
+function formatStakeTimestamp(unixSeconds: number | null | undefined): string {
+  if (typeof unixSeconds !== 'number' || !Number.isFinite(unixSeconds) || unixSeconds <= 0) return '—'
+  try {
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const delta = nowSeconds - Math.floor(unixSeconds)
+    if (!Number.isFinite(delta)) return '—'
+    if (delta < 0) {
+      const future = Math.abs(delta)
+      if (future < 60) return `${future}s`
+      if (future < 3600) return `${Math.floor(future / 60)}m`
+      if (future < 86400) return `${Math.floor(future / 3600)}h`
+      return `${Math.floor(future / 86400)}d`
+    }
+    if (delta < 10) return 'just now'
+    if (delta < 60) return `${delta}s`
+    if (delta < 3600) return `${Math.floor(delta / 60)}m`
+    if (delta < 86400) return `${Math.floor(delta / 3600)}h`
+    const days = Math.floor(delta / 86400)
+    const hours = Math.floor((delta % 86400) / 3600)
+    return `${days}d ${hours}h`
+  } catch {
+    return '—'
+  }
+}
+
+function formatStakeTimestampIso(unixSeconds: number | null | undefined): string | undefined {
+  if (typeof unixSeconds !== 'number' || !Number.isFinite(unixSeconds) || unixSeconds <= 0) return undefined
+  try {
+    const d = new Date(unixSeconds * 1000)
+    if (!Number.isFinite(d.getTime())) return undefined
+    return d.toISOString()
+  } catch {
+    return undefined
   }
 }
 

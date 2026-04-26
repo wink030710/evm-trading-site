@@ -16,6 +16,8 @@ contract Monitor {
 
     error LengthMismatch();
 
+    bool[129] public is_staked;
+
     function getStakedAmount(bytes32[] calldata hotkeys, bytes32[] calldata coldkeys)
         external
         view

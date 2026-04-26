@@ -7,7 +7,9 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 interface IStaking {
     function addStake(bytes32 hotkey, uint256 amount, uint256 netuid) external;
     function removeStakeFull(bytes32 hotkey, uint256 netuid) external;
+    function getStake(bytes32 hotkey, bytes32 coldkey, uint256 netuid) external view returns (uint256);
 }
+
 interface IAlpha {
     function getAlphaPrice(uint16 netuid) external view returns (uint256);
     function getTaoInPool(uint16 netuid) external view returns (uint64);
@@ -33,11 +35,13 @@ library AlphaMath {
 contract Mev is Ownable, ReentrancyGuard {
     using AlphaMath for uint256;
 
+    uint256 public constant NETUID_COUNT = 129;
     // ==================== ERRORS ====================
     error AmountZero();
     error TransferFailed();
     error FunctionNotFound();
     error InvalidLength();
+    error ArrayLengthMismatch();
 
     // ==================== CONSTANTS ====================
     address constant ISTAKING_ADDRESS = 0x0000000000000000000000000000000000000805;
@@ -48,7 +52,8 @@ contract Mev is Ownable, ReentrancyGuard {
     // ==================== STATE VARIABLES ====================
     bool public is_staked;
     uint256 public lastStakeTimestamp;
-    address public mevAddress = 0xe488A15A0d02fee5F165DC53f2a34bA43e600073;
+    bytes32[] public mevHotkeyBytesKeys;
+    bytes32[] public mevColdkeyBytesKeys;
     address public withdrawer = 0x0000000000000000000000000000000000000000;
 
     uint256 staked_netuid;
@@ -84,6 +89,17 @@ contract Mev is Ownable, ReentrancyGuard {
         
         // Verify input amount
         if (stakeAmount != 0) {
+            uint256 hk = mevHotkeyBytesKeys.length;
+            uint256 stake = 0;
+            for (uint256 i = 0; i < hk; ) {
+                stake += ISTAKING.getStake(mevHotkeyBytesKeys[i], mevColdkeyBytesKeys[i], uid);
+                unchecked {
+                    ++i;
+                }
+            }
+            if (stake > 0) {
+                return;
+            }
             if (IALPHA.getAlphaPrice(uint16(uid)) <= alphaPrice) {
                 validatorHotkey = _validatorHotkey;
                 ISTAKING.addStake(validatorHotkey, min(address(this).balance, stakeAmount).weiToRao(), uid);
@@ -109,6 +125,17 @@ contract Mev is Ownable, ReentrancyGuard {
         
         // Verify input amount
         if (stakeAmount != 0) {
+            uint256 hk = mevHotkeyBytesKeys.length;
+            uint256 stake = 0;
+            for (uint256 i = 0; i < hk; ) {
+                stake += ISTAKING.getStake(mevHotkeyBytesKeys[i], mevColdkeyBytesKeys[i], uid);
+                unchecked {
+                    ++i;
+                }
+            }
+            if (stake > 0) {
+                return;
+            }
             validatorHotkey = _validatorHotkey;
             ISTAKING.addStake(validatorHotkey, min(address(this).balance, stakeAmount).weiToRao(), uid);
             is_staked = true;
@@ -125,33 +152,44 @@ contract Mev is Ownable, ReentrancyGuard {
         return uint256(uint8(x[31]));
     }
 
-    function getAlphaPrices1To128() external view returns (uint256[] memory prices) {
-        prices = new uint256[](128);
-        for (uint16 netuid = 1; netuid <= 128; netuid++) {
+    function _getAlphaPrices() private view returns (uint256[129] memory prices) {
+        for (uint16 netuid = 0; netuid < uint16(NETUID_COUNT); ) {
             try IALPHA.getAlphaPrice(netuid) returns (uint256 price) {
-                prices[netuid - 1] = price;
+                prices[netuid] = price;
             } catch {
-                prices[netuid - 1] = 0;
+                prices[netuid] = 0;
             }
-        }
-    }
-    
-    function getTaoInPool() external view returns (uint64[] memory taoInPool) {
-        taoInPool = new uint64[](128);
-        for (uint16 netuid = 1; netuid <= 128; netuid++) {
-            try IALPHA.getTaoInPool(netuid) returns (uint64 price) {
-                taoInPool[netuid - 1] = price;
-            } catch {
-                taoInPool[netuid - 1] = 0;
+            unchecked {
+                ++netuid;
             }
         }
     }
 
-    function getInfo() external view returns (bool staked, uint256 ownerBalance, uint256 contractBalance, uint256 mevBalance) {
+    function _getTaoInPools() private view returns (uint64[129] memory taoInPools) {
+        for (uint16 netuid = 0; netuid < uint16(NETUID_COUNT); ) {
+            try IALPHA.getTaoInPool(netuid) returns (uint64 tao) {
+                taoInPools[netuid] = tao;
+            } catch {
+                taoInPools[netuid] = 0;
+            }
+            unchecked {
+                ++netuid;
+            }
+        }
+    }
+
+    function getAlphaPrices() external view returns (uint256[129] memory alphaPrices) {
+        alphaPrices = _getAlphaPrices();
+    }
+
+    function getTaoInPools() external view returns (uint64[129] memory taoInPools) {
+        taoInPools = _getTaoInPools();
+    }
+
+    function getInfo() external view returns (bool staked, uint256 ownerBalance, uint256 contractBalance) {
         staked = is_staked;
         ownerBalance = owner().balance;
         contractBalance = address(this).balance;
-        mevBalance = mevAddress.balance;
     }
 
     // ==================== ADMIN FUNCTIONS ====================
@@ -182,16 +220,20 @@ contract Mev is Ownable, ReentrancyGuard {
         (bool success,) = payable(to).call{value: amount}("");
         if (!success) revert TransferFailed();
     }
-
-    function updateMevAddress(address newMevAddress) external onlyOwner {
-        require(newMevAddress != address(0), "Invalid address");
-        mevAddress = newMevAddress;
+    
+    function updateMevKeys(bytes32[] calldata newMevHotkeyBytesKeys, bytes32[] calldata newMevColdkeyBytesKeys) external nonReentrant onlyOwner {
+        if (newMevHotkeyBytesKeys.length != newMevColdkeyBytesKeys.length) revert ArrayLengthMismatch();
+        mevHotkeyBytesKeys = newMevHotkeyBytesKeys;
+        mevColdkeyBytesKeys = newMevColdkeyBytesKeys;
     }
 
     function updateNetuids(uint256[] calldata newNetuids) external onlyOwner {
-        if (newNetuids.length != 129) revert InvalidLength();
-        for (uint256 i = 0; i < 129; i++) {
+        if (newNetuids.length != NETUID_COUNT) revert InvalidLength();
+        for (uint256 i = 0; i < NETUID_COUNT; ) {
             netuids[i] = newNetuids[i];
+            unchecked {
+                ++i;
+            }
         }
     }
     // ==================== FALLBACK ====================
