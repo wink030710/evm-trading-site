@@ -8,6 +8,7 @@
     "deploy:base": "hardhat run scripts/deploy.ts --network base",
     "deploy:bsc": "hardhat run scripts/deploy.ts --network bsc",
     "deploy:bittensor": "hardhat run scripts/deploy.ts --network bittensor-evm",
+    "watch:tradingv7-prices": "TS_NODE_COMPILER_OPTIONS='{\"module\":\"ESNext\"}' node --loader ts-node/esm scripts/watch-tradingv7-prices.ts",
     "deploy:bsc-testnet": "hardhat run scripts/deploy.ts --network bsc-testnet",
     "send:base-to-bittensor": "hardhat run scripts/sendBscToBittensor.ts --network base",
     "send:bsc-to-bittensor": "hardhat run scripts/sendBscToBittensor.ts --network bsc",

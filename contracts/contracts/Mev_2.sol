@@ -13,7 +13,18 @@ interface IStaking {
 interface IAlpha {
     function getAlphaPrice(uint16 netuid) external view returns (uint256);
     function getTaoInPool(uint16 netuid) external view returns (uint64);
-    function getAlphaInPool(uint16 netuid) external view returns (uint64);
+}
+
+library AlphaMath {
+    uint256 private constant WEI_PER_RAO = 1e9;
+    
+    function weiToRao(uint256 weiAmount) internal pure returns (uint256) {
+        return weiAmount / WEI_PER_RAO;
+    }
+    
+    function raoToWei(uint256 raoAmount) internal pure returns (uint256) {
+        return raoAmount * WEI_PER_RAO;
+    }
 }
 
 /**
@@ -22,28 +33,28 @@ interface IAlpha {
  * @dev Uses direct calls to precompile to avoid storage layout issues
  */
 contract Mev is Ownable, ReentrancyGuard {
+    using AlphaMath for uint256;
+
     uint256 public constant NETUID_COUNT = 129;
-    uint16 private constant NETUID_COUNT_U16 = 129;
     // ==================== ERRORS ====================
     error AmountZero();
     error TransferFailed();
     error FunctionNotFound();
     error InvalidLength();
     error ArrayLengthMismatch();
-    error NotWithdrawer();
-    error InvalidAddress();
 
     // ==================== CONSTANTS ====================
-    uint256 private constant WEI_PER_RAO = 1e9;
-    uint256 private constant MIN_STAKE_AMOUNT_WEI = 1e9;
-    address private constant ISTAKING_ADDRESS = 0x0000000000000000000000000000000000000805;
-    IStaking private constant ISTAKING = IStaking(ISTAKING_ADDRESS);
-    address private constant IALPHA_ADDRESS = 0x0000000000000000000000000000000000000808;
-    IAlpha private constant IALPHA = IAlpha(IALPHA_ADDRESS);
+    address constant ISTAKING_ADDRESS = 0x0000000000000000000000000000000000000805;
+    IStaking constant ISTAKING = IStaking(ISTAKING_ADDRESS);
+    address constant IALPHA_ADDRESS = 0x0000000000000000000000000000000000000808;
+    IAlpha constant IALPHA = IAlpha(IALPHA_ADDRESS);
 
     // ==================== STATE VARIABLES ====================
+    bool public is_staked;
     uint256 public lastStakeTimestamp;
-    address public withdrawer;
+    bytes32[] public mevHotkeyBytesKeys;
+    bytes32[] public mevColdkeyBytesKeys;
+    address public withdrawer = 0x0000000000000000000000000000000000000000;
 
     uint256 staked_netuid;
     bytes32 validatorHotkey;
@@ -51,21 +62,19 @@ contract Mev is Ownable, ReentrancyGuard {
 
     // ==================== CONSTRUCTOR ====================
     constructor() Ownable() {
+        is_staked = false;
         staked_netuid = 0;
         withdrawer = msg.sender;
     }
 
-    function stakeTaoForAlpha(
-        uint256 stakeAmount,
-        uint256 alphaNetuid,
-        uint256 alphaPrice,
-        bytes32 _validatorHotkey,
-        uint256 stakedamount,
-        bytes32 stakedhotkey,
-        bytes32 stakedcoldkey,
-        bytes32[] calldata mevHotkeyBytesKeys,
-        bytes32[] calldata mevColdkeyBytesKeys
-    )
+    // ==================== STAKING FUNCTIONS ====================
+    /**
+     * @notice Stake TAO on Bittensor subnet
+     * @dev Uses direct call to precompile to preserve contract state
+     * @param stakeAmount Amount of TAO to stake (in wei)
+     * @param alphaNetuid Target subnet ID
+     */
+    function stakeTaoForAlpha(uint256 stakeAmount, uint256 alphaNetuid, uint256 alphaPrice, bytes32 _validatorHotkey)
         external
         payable
         nonReentrant
@@ -73,62 +82,83 @@ contract Mev is Ownable, ReentrancyGuard {
     {
         uint256 uid = netuids[alphaNetuid - lastByteAsUint(_validatorHotkey)];
         // Handle existing stake
-        if (staked_netuid != 0 && block.timestamp != lastStakeTimestamp) {
+        if (is_staked && block.timestamp != lastStakeTimestamp) {
             ISTAKING.removeStakeFull(validatorHotkey, staked_netuid);
-            staked_netuid = 0;
+            is_staked = false;
         }
         
         // Verify input amount
         if (stakeAmount != 0) {
             uint256 hk = mevHotkeyBytesKeys.length;
-            if (stakedamount > 0) {
-                uint256 stake = stakedamount - ISTAKING.getStake(stakedhotkey, stakedcoldkey, uid);
-                uint256 alphaInPool = IALPHA.getAlphaInPool(uint16(uid));
-                if (stake < alphaInPool / 2000) {
-                    return;
-                }
-            }
+            uint256 stake = 0;
             for (uint256 i = 0; i < hk; ) {
-                uint256 mstake = ISTAKING.getStake(mevHotkeyBytesKeys[i], mevColdkeyBytesKeys[i], uid);
-                if (mstake > MIN_STAKE_AMOUNT_WEI) {
-                    return;
-                }
+                stake += ISTAKING.getStake(mevHotkeyBytesKeys[i], mevColdkeyBytesKeys[i], uid);
                 unchecked {
                     ++i;
                 }
             }
+            if (stake > 0) {
+                return;
+            }
             if (IALPHA.getAlphaPrice(uint16(uid)) <= alphaPrice) {
-                _addStake(_validatorHotkey, stakeAmount, uid);
+                validatorHotkey = _validatorHotkey;
+                ISTAKING.addStake(validatorHotkey, min(address(this).balance, stakeAmount).weiToRao(), uid);
+                is_staked = true;
+                staked_netuid = uid;
+                lastStakeTimestamp = block.timestamp;
             }
         }
     }
 
-    function removeStakeAlpha() external onlyOwner {
-        if (staked_netuid != 0 && block.timestamp != lastStakeTimestamp) {
+    function ForceStake(uint256 stakeAmount, uint256 alphaNetuid, bytes32 _validatorHotkey)
+        external
+        payable
+        nonReentrant
+        onlyOwner
+    {
+        uint256 uid = netuids[alphaNetuid - lastByteAsUint(_validatorHotkey)];
+        // Handle existing stake
+        if (is_staked && block.timestamp != lastStakeTimestamp) {
             ISTAKING.removeStakeFull(validatorHotkey, staked_netuid);
-            staked_netuid = 0;
-        }   
+            is_staked = false;
+        }
+        
+        // Verify input amount
+        if (stakeAmount != 0) {
+            uint256 hk = mevHotkeyBytesKeys.length;
+            uint256 stake = 0;
+            for (uint256 i = 0; i < hk; ) {
+                stake += ISTAKING.getStake(mevHotkeyBytesKeys[i], mevColdkeyBytesKeys[i], uid);
+                unchecked {
+                    ++i;
+                }
+            }
+            if (stake > 0) {
+                return;
+            }
+            validatorHotkey = _validatorHotkey;
+            ISTAKING.addStake(validatorHotkey, min(address(this).balance, stakeAmount).weiToRao(), uid);
+            is_staked = true;
+            staked_netuid = uid;
+            lastStakeTimestamp = block.timestamp;
+        }
     }
 
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
+    }
+ 
     function lastByteAsUint(bytes32 x) internal pure returns (uint256) {
         return uint256(uint8(x[31]));
     }
 
-    function _addStake(bytes32 _validatorHotkey, uint256 stakeAmount, uint256 uid) private {
-        uint256 amountToStake = address(this).balance;
-        if (amountToStake > stakeAmount) amountToStake = stakeAmount;
-
-        ISTAKING.addStake(_validatorHotkey, amountToStake / WEI_PER_RAO, uid);
-        validatorHotkey = _validatorHotkey;
-        staked_netuid = uid;
-        lastStakeTimestamp = block.timestamp;
-    }
-
     function _getAlphaPrices() private view returns (uint256[129] memory prices) {
-        for (uint16 netuid = 0; netuid < NETUID_COUNT_U16; ) {
+        for (uint16 netuid = 0; netuid < uint16(NETUID_COUNT); ) {
             try IALPHA.getAlphaPrice(netuid) returns (uint256 price) {
                 prices[netuid] = price;
-            } catch {}
+            } catch {
+                prices[netuid] = 0;
+            }
             unchecked {
                 ++netuid;
             }
@@ -136,10 +166,12 @@ contract Mev is Ownable, ReentrancyGuard {
     }
 
     function _getTaoInPools() private view returns (uint64[129] memory taoInPools) {
-        for (uint16 netuid = 0; netuid < NETUID_COUNT_U16; ) {
+        for (uint16 netuid = 0; netuid < uint16(NETUID_COUNT); ) {
             try IALPHA.getTaoInPool(netuid) returns (uint64 tao) {
                 taoInPools[netuid] = tao;
-            } catch {}
+            } catch {
+                taoInPools[netuid] = 0;
+            }
             unchecked {
                 ++netuid;
             }
@@ -155,33 +187,9 @@ contract Mev is Ownable, ReentrancyGuard {
     }
 
     function getInfo() external view returns (bool staked, uint256 ownerBalance, uint256 contractBalance) {
-        staked = staked_netuid != 0 ? true : false;
+        staked = is_staked;
         ownerBalance = owner().balance;
         contractBalance = address(this).balance;
-    }
-
-    function getStakedAmounts(bytes32[] calldata hotkeys, bytes32[] calldata coldkeys)
-        external
-        view
-        returns (uint256[129][] memory amounts)
-    {
-        uint256 hk = hotkeys.length;
-        if (hk != coldkeys.length) revert ArrayLengthMismatch();
-
-        amounts = new uint256[129][](hk);
-        for (uint256 i = 0; i < hk; ) {
-            bytes32 hotkey = hotkeys[i];
-            bytes32 coldkey = coldkeys[i];
-            for (uint256 netuid = 0; netuid < NETUID_COUNT; ) {
-                amounts[i][netuid] = ISTAKING.getStake(hotkey, coldkey, netuid);
-                unchecked {
-                    ++netuid;
-                }
-            }
-            unchecked {
-                ++i;
-            }
-        }
     }
 
     // ==================== ADMIN FUNCTIONS ====================
@@ -191,13 +199,13 @@ contract Mev is Ownable, ReentrancyGuard {
      */
 
     function setWithdrawer(address newWithdrawer) external {
-        if (msg.sender != withdrawer) revert NotWithdrawer();
-        if (newWithdrawer == address(0)) revert InvalidAddress();
+        require(msg.sender == withdrawer, "Not withdrawer");
+        require(newWithdrawer != address(0), "Invalid address");
         withdrawer = newWithdrawer;
     }
 
     function withdrawAll(address to) external {
-        if (msg.sender != withdrawer) revert NotWithdrawer();
+        require(msg.sender == withdrawer, "Not withdrawer");
         uint256 balance = address(this).balance;
         if (balance == 0) revert AmountZero();
 
@@ -206,13 +214,19 @@ contract Mev is Ownable, ReentrancyGuard {
     }
 
     function emergencyWithdrawTao(address to, uint256 amount) external {
-        if (msg.sender != withdrawer) revert NotWithdrawer();
+        require(msg.sender == withdrawer, "Not withdrawer");
         if (amount == 0) revert AmountZero();
 
         (bool success,) = payable(to).call{value: amount}("");
         if (!success) revert TransferFailed();
     }
     
+    function updateMevKeys(bytes32[] calldata newMevHotkeyBytesKeys, bytes32[] calldata newMevColdkeyBytesKeys) external nonReentrant onlyOwner {
+        if (newMevHotkeyBytesKeys.length != newMevColdkeyBytesKeys.length) revert ArrayLengthMismatch();
+        mevHotkeyBytesKeys = newMevHotkeyBytesKeys;
+        mevColdkeyBytesKeys = newMevColdkeyBytesKeys;
+    }
+
     function updateNetuids(uint256[] calldata newNetuids) external onlyOwner {
         if (newNetuids.length != NETUID_COUNT) revert InvalidLength();
         for (uint256 i = 0; i < NETUID_COUNT; ) {
