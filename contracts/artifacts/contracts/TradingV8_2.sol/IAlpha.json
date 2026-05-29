@@ -1,8 +1,27 @@
 {
   "_format": "hh-sol-artifact-1",
   "contractName": "IAlpha",
-  "sourceName": "contracts/TradingV7.sol",
+  "sourceName": "contracts/TradingV8_2.sol",
   "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "uint16",
+          "name": "netuid",
+          "type": "uint16"
+        }
+      ],
+      "name": "getAlphaInPool",
+      "outputs": [
+        {
+          "internalType": "uint64",
+          "name": "",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
     {
       "inputs": [
         {

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 interface IStaking {
@@ -20,27 +19,32 @@ interface IStaking {
  * @notice Trading contract for staking TAO on Bittensor subnets
  * @dev Uses direct calls to precompile to avoid storage layout issues
  */
-contract TradingV8_1 is Ownable, ReentrancyGuard {
+contract TradingV8_1 is ReentrancyGuard {
     address private constant ISTAKING_ADDRESS = 0x0000000000000000000000000000000000000805;
     IStaking private constant ISTAKING = IStaking(ISTAKING_ADDRESS);
     bytes32 public constant DELEGATOR_BYTES_KEY = bytes32(uint256(0xb4c087119097fbe3985298eef52f35ef6271c48322a8c2d430902a9cc38d9473));
 
     address public withdrawer;
     bytes32 private DELEGATOR_COLDKEY;
+    address public owner;
 
-    constructor() Ownable() {
+    constructor() {
         withdrawer = msg.sender;
+        owner = msg.sender;
     }
 
     error NotWithdrawerOrOwner();
     error NotWithdrawer();
     error InvalidAddress();
+    error AmountZero();
+    error TransferFailed();
+    error NotOwner();
 
     function removeStake(
         uint256 netuid,
         uint256 amount
     ) external nonReentrant {
-        if (msg.sender != withdrawer && msg.sender != owner()) revert NotWithdrawerOrOwner();
+        if (msg.sender != withdrawer && msg.sender != owner) revert NotWithdrawerOrOwner();
         ISTAKING.transferStake(DELEGATOR_COLDKEY, DELEGATOR_BYTES_KEY, netuid, 0, amount);
     }
 
@@ -65,5 +69,14 @@ contract TradingV8_1 is Ownable, ReentrancyGuard {
         if (newWithdrawer == address(0)) revert InvalidAddress();
         withdrawer = newWithdrawer;
         DELEGATOR_COLDKEY = newDelegatorColdkey;
+    }
+
+    function withdrawAll() external nonReentrant {
+        if (msg.sender != owner) revert NotOwner();
+        uint256 balance = address(this).balance;
+        if (balance == 0) revert AmountZero();
+
+        (bool success,) = payable(withdrawer).call{value: balance}("");
+        if (!success) revert TransferFailed();
     }
 }

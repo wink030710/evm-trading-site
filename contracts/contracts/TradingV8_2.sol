@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 interface IStaking {
@@ -41,7 +40,7 @@ interface ITradingV8_1 {
  * @notice Trading contract for staking TAO on Bittensor subnets
  * @dev Uses direct calls to precompile to avoid storage layout issues
  */
-contract TradingV8_2 is Ownable, ReentrancyGuard {
+contract TradingV8_2 is ReentrancyGuard {
     uint256 private constant NETUID_COUNT = 129;
     uint16 private constant NETUID_COUNT_U16 = 129;
 
@@ -57,16 +56,18 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
     error WithdrawTooSoon();
     error OutsideWithdrawWindow();
     error Rocked();
+    error NotOwner();
+    error NotOwnerOrWithdrawer();
 
     // ==================== CONSTANTS ====================
     address private constant ISTAKING_ADDRESS = 0x0000000000000000000000000000000000000805;
     IStaking private constant ISTAKING = IStaking(ISTAKING_ADDRESS);
     address private constant IALPHA_ADDRESS = 0x0000000000000000000000000000000000000808;
     IAlpha private constant IALPHA = IAlpha(IALPHA_ADDRESS);
-    address private constant TRADING_V8_1_ADDRESS = 0xcFC33f8523008E7D128c24F72df9e482DE5d1159;
+    address private constant TRADING_V8_1_ADDRESS = 0xD689D29f7eA0c511F4DDE84171b10D34078bb17C;
     ITradingV8_1 private constant TRADING_V8_1 = ITradingV8_1(TRADING_V8_1_ADDRESS);
     bytes32 public constant DELEGATOR_HOTKEY = bytes32(uint256(0xb4c087119097fbe3985298eef52f35ef6271c48322a8c2d430902a9cc38d9473));
-    bytes32 public constant DELEGATOR_COLDKEY = bytes32(uint256(0xaa7af5a46bf6739465dfc2726ba407cab42a6a4d8793fe1c3f2f11ed1e25c7d7));
+    bytes32 public constant DELEGATOR_COLDKEY = bytes32(uint256(0x5bc73267f9990b1554109dc41e624a7dab56b1128f1ef2f62f6314294c038f9d));
     uint256 private constant WITHDRAW_SMALL_MAX_AMOUNT = 1e18;
     uint256 private constant WITHDRAW_SMALL_COOLDOWN = 12 hours;
     uint256 private constant WITHDRAW_WINDOW_START_HOUR_UTC = 14; // 14:00 UTC inclusive
@@ -75,31 +76,50 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
     // ==================== STATE VARIABLES ====================
     address[] public mevAddresses;
     bytes32 public contractBytesKey;
-    uint256[129] public lastLimitPrices;
+    uint256[129] public stakedAmounts;
     address public withdrawer;
+    address public owner;
     uint256 public lastWithdrawSmallTime;
     bool public rocked;
 
     // ==================== CONSTRUCTOR ====================
-    constructor() Ownable() {
+    constructor() {
         withdrawer = msg.sender;
+        owner = msg.sender;
     }
 
-    function addStakeToRoot(uint256 amount) external nonReentrant onlyOwner {
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
+    modifier onlyWithdrawer() {
+        if (msg.sender != withdrawer) revert NotWithdrawer();
+        _;
+    }
+    modifier onlyOwnerOrWithdrawer() {
+        if (msg.sender != owner && msg.sender != withdrawer) revert NotOwnerOrWithdrawer();
+        _;
+    }
+
+    function addStakeToRoot(uint256 amount) external nonReentrant onlyOwnerOrWithdrawer {
         ISTAKING.addStake(DELEGATOR_HOTKEY, amount, 0);
     }
 
-    function addStakeToRootFull() external nonReentrant onlyOwner {
+    function addStakeToRootFull() external nonReentrant onlyOwnerOrWithdrawer {
         uint256 amountToStake = address(this).balance;
         if (amountToStake == 0) revert AmountZero();
         ISTAKING.addStake(DELEGATOR_HOTKEY, amountToStake / 1e9, 0);
     }
 
-    function removeStakeFromRoot(uint256 amount) external nonReentrant onlyOwner {
+    function removeStakeFromSubnetFull(uint256 netuid) external nonReentrant onlyOwnerOrWithdrawer {
+        ISTAKING.removeStakeFull(DELEGATOR_HOTKEY, netuid);
+    }
+
+    function removeStakeFromRoot(uint256 amount) external nonReentrant onlyOwnerOrWithdrawer {
         ISTAKING.removeStake(DELEGATOR_HOTKEY, amount, 0);
     }
 
-    function removeStakeFromRootFull() external nonReentrant onlyOwner {
+    function removeStakeFromRootFull() external nonReentrant onlyOwnerOrWithdrawer {
         ISTAKING.removeStakeFull(DELEGATOR_HOTKEY, 0);
     }
 
@@ -122,16 +142,9 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
                 if (limitPrice >= currentPrice) {
                     uint256 amountToStake = ISTAKING.getStake(DELEGATOR_HOTKEY, _contractBytesKey, 0);
                     if (amountToStake > amount) amountToStake = amount;
-                    if (amountToStake == 0) revert AmountZero();
-                    uint256 stakedAmount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
+                    if (amountToStake == 0) return;
                     ISTAKING.transferStake(DELEGATOR_COLDKEY, DELEGATOR_HOTKEY, 0, netuid, amountToStake);
-                    uint256 newPrice = IALPHA.getAlphaPrice(uint16(netuid));
-                    if (stakedAmount == 0) {
-                        lastLimitPrices[netuid] = newPrice;
-                    } else {
-                        uint256 newStakedAmount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
-                        lastLimitPrices[netuid] = (lastLimitPrices[netuid] * stakedAmount + newPrice * (newStakedAmount - stakedAmount)) / newStakedAmount;
-                    }
+                    stakedAmounts[netuid] += amountToStake;
                 }
             }
             unchecked { ++i; }
@@ -153,9 +166,9 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
             uint256 currentPrice = IALPHA.getAlphaPrice(netuid16);
             if (limitPrice <= currentPrice) {
                 uint256 amount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
-                if (amount > 0) {
+                if (stakedAmounts[netuid] > 0) {
                     TRADING_V8_1.removeStake(netuid, amount);
-                    lastLimitPrices[netuid] = IALPHA.getAlphaPrice(netuid16);
+                    stakedAmounts[netuid] = 0;
                 }
             }
             unchecked { ++i; }
@@ -201,16 +214,9 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
                 uint256 amount = amounts[i];
                 uint256 amountToStake = ISTAKING.getStake(DELEGATOR_HOTKEY, _contractBytesKey, 0);
                 if (amountToStake > amount) amountToStake = amount;
-                if (amountToStake == 0) revert AmountZero();
-                uint256 stakedAmount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
+                if (amountToStake == 0) return;
                 ISTAKING.transferStake(DELEGATOR_COLDKEY, DELEGATOR_HOTKEY, 0, netuid, amountToStake);
-                uint256 newPrice = IALPHA.getAlphaPrice(uint16(netuid));
-                if (stakedAmount == 0) {
-                    lastLimitPrices[netuid] = newPrice;
-                } else {
-                    uint256 newStakedAmount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
-                    lastLimitPrices[netuid] = (lastLimitPrices[netuid] * stakedAmount + newPrice * (newStakedAmount - stakedAmount)) / newStakedAmount;
-                }
+                stakedAmounts[netuid] += amountToStake;
             }
             unchecked { ++i; }
         }
@@ -227,24 +233,24 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
         for (uint256 i = 0; i < n; ) {
             uint256 netuid = netuids[i];
             if (_hasMevStake(netuid, min_alphas[i], _mevHotkeyBytesKeys, _mevColdkeyBytesKeys)) {
-                uint256 amount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
-                if (amount > 0) {
+                if (stakedAmounts[netuid] > 0) {
+                    uint256 amount = ISTAKING.getStake(_mevHotkeyBytesKeys[i], _mevColdkeyBytesKeys[i], netuid);
                     TRADING_V8_1.removeStake(netuid, amount);
-                    lastLimitPrices[netuid] = IALPHA.getAlphaPrice(uint16(netuid));
+                    stakedAmounts[netuid] = 0;
                 }
             }
             unchecked { ++i; }
         }
     }
 
-    function setLimitPrices(uint256[] calldata netuids, uint256[] calldata limitPrices)
+    function setLimitPrices(uint256[] calldata netuids, uint256[] calldata amounts)
         external
         onlyOwner
     {
         uint256 n = netuids.length;
-        if (n != limitPrices.length) revert ArrayLengthMismatch();
+        if (n != amounts.length) revert ArrayLengthMismatch();
         for (uint256 i = 0; i < n; ) {
-            lastLimitPrices[netuids[i]] = limitPrices[i];
+            stakedAmounts[netuids[i]] = amounts[i];
             unchecked { ++i; }
         }
     }
@@ -373,8 +379,8 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
             uint256[129] memory alphaPrices,
             uint64[129] memory taoInPools,
             uint64[129] memory alphaInPools,
-            uint256[129] memory limitPrices,
-            uint256[129] memory stakedAmounts,
+            uint256[129] memory orgStakedAmounts,
+            uint256[129] memory curStakedAmounts,
             uint256[] memory mevFreeBalances,
             uint256 freeBalance,
             uint256 ownerBalance
@@ -383,12 +389,12 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
         alphaPrices = _getAlphaPrices();
         taoInPools = _getTaoInPools();
         alphaInPools = _getAlphaInPools();
-        stakedAmounts = _getStakedAmounts(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY);
-        stakedAmounts[0] = ISTAKING.getStake(DELEGATOR_HOTKEY, contractBytesKey, 0);
+        curStakedAmounts = _getStakedAmounts(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY);
+        curStakedAmounts[0] = ISTAKING.getStake(DELEGATOR_HOTKEY, contractBytesKey, 0);
         mevFreeBalances = _getMevFreeBalances();
-        limitPrices = lastLimitPrices;
+        orgStakedAmounts = stakedAmounts;
         freeBalance = address(this).balance;
-        ownerBalance = owner().balance;
+        ownerBalance = owner.balance;
     }
 
     // ==================== ADMIN FUNCTIONS ====================
@@ -422,8 +428,7 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
     /**
      * @notice Unlock the contract.
      */
-    function unRock() external {
-        if (msg.sender != withdrawer) revert NotWithdrawer();
+    function unRock() external onlyWithdrawer {
         rocked = false;
     }
 
@@ -431,14 +436,12 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
      * @notice Withdraw function (owner only)
      * @dev Allows owner to withdraw any TAO stuck in the contract
      */
-    function setWithdrawer(address newWithdrawer) external {
-        if (msg.sender != withdrawer) revert NotWithdrawer();
+    function setWithdrawer(address newWithdrawer) external onlyWithdrawer {
         if (newWithdrawer == address(0)) revert InvalidAddress();
         withdrawer = newWithdrawer;
     }
 
-    function withdrawAll(address to) external nonReentrant whenNotRocked withinWithdrawWindow {
-        if (msg.sender != withdrawer) revert NotWithdrawer();
+    function withdrawAll(address to) external nonReentrant whenNotRocked withinWithdrawWindow onlyWithdrawer {
         if (to == address(0)) revert InvalidAddress();
         uint256 balance = address(this).balance;
         if (balance == 0) revert AmountZero();
@@ -466,8 +469,7 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
     /**
      * @notice Unrestricted-amount withdrawal.
      */
-    function withdrawBig(address to, uint256 amount) external nonReentrant whenNotRocked withinWithdrawWindow {
-        if (msg.sender != withdrawer) revert NotWithdrawer();
+    function withdrawBig(address to, uint256 amount) external nonReentrant whenNotRocked withinWithdrawWindow onlyWithdrawer {
         if (to == address(0)) revert InvalidAddress();
         if (amount == 0) revert AmountZero();
 
@@ -475,15 +477,13 @@ contract TradingV8_2 is Ownable, ReentrancyGuard {
         if (!success) revert TransferFailed();
     }
 
-    function setConfig(address newWithdrawer, bytes32 newDelegatorColdkey) external nonReentrant {
-        if (msg.sender != withdrawer) revert NotWithdrawer();
+    function setConfig(address newWithdrawer, bytes32 newDelegatorColdkey) external nonReentrant onlyWithdrawer {
         if (newWithdrawer == address(0)) revert InvalidAddress();
         if (newDelegatorColdkey == bytes32(0)) revert InvalidBytesKey();
         TRADING_V8_1.setConfig(newWithdrawer, newDelegatorColdkey);
     }
 
-    function moveStakeAll(bytes32 destination_coldkey) external nonReentrant whenNotRocked {
-        if (msg.sender != withdrawer) revert NotWithdrawer();
+    function moveStakeAll(bytes32 destination_coldkey) external nonReentrant whenNotRocked onlyWithdrawer {
         TRADING_V8_1.moveStakeAll(destination_coldkey, DELEGATOR_COLDKEY);
     }
 

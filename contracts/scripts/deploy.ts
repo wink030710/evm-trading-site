@@ -5,7 +5,7 @@ import solc from "solc";
 import { ethers } from "ethers";
 
 const DEFAULT_RPC_URL = "http://185.8.107.85:9944";
-const CONTRACT_NAME = "TradingV8_2";
+const CONTRACT_NAME = "FreeBalanceReader";
 const SOL_FILE_NAME = `${CONTRACT_NAME}.sol`;
 const scriptDir = path.dirname(path.resolve(process.argv[1]));
 

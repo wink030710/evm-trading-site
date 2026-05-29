@@ -1,7 +1,7 @@
 {
   "_format": "hh-sol-artifact-1",
   "contractName": "IStaking",
-  "sourceName": "contracts/TradingV7_3.sol",
+  "sourceName": "contracts/Mev_2.sol",
   "abi": [
     {
       "inputs": [

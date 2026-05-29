@@ -2,8 +2,8 @@ import { ethers } from "ethers";
 import { MaxUint256, parseUnits } from "ethers";
 import "dotenv/config";
 
-const CONTRACT_ADDRESS = "0xD40D0982c289A1521255641cd2E8729dbC6f27b9";
-const CONTRACT_ADDRESS_2 = "0x8F2e85eaC9521EB074810510D1e89F3c161FEC45";
+const CONTRACT_ADDRESS = "0xB6Ec560cE96126C7EcF19dA2c73874A399bB74DF";
+const CONTRACT_ADDRESS_2 = "0x496503F25abbb244C0C8dA93e6E248b0e7cAb7c2";
 
 const ABI = [
   "function owner() view returns (address)",
@@ -69,6 +69,8 @@ const ABI = [
   "error WithdrawTooSoon()",
   "error OutsideWithdrawWindow()",
   "error Rocked()",
+  "error NotOwner()",
+  "error NotOwnerOrWithdrawer()",
 ];
 
 async function main(): Promise<void> {
@@ -89,19 +91,19 @@ async function main(): Promise<void> {
     const balance = await provider.getBalance(CONTRACT_ADDRESS);
     console.log("\nContract balance:", ethers.formatEther(balance), "TAO");
 
-    // const tx = await contract.updateContractBytesKey('0x50dbcdc45a9374a904ea910ebc13e33a138d7953fd4da8b13ea4aba0668b3fde');
+    // const tx = await contract.updateContractBytesKey('0x45c2128aefe6224450c6bafb7bcd891208d013b2edaf0ee3a4aee2544512ee9e');
     // const tx = await contract.updateMevAddresses(
     //   [
-    //     "0xA05d84253E0C86e33D49dD8f300774b026121A21", // 5GHTwcpZAzt8eCNwYLbSzwFGzQQxWuyC4AadxJ1NNunuTsB7
+    //     "0xA05d84253E0C86e33D49dD8f300774b026121A21", // 5CYGeKWkSapDLYYxxjdC3D37SBWbyUXN49g17rBqQxghix9r
     //     "0x95Ae1Ba550506cc04913d67b702AEe3D99b9813C", // 5H4iozgTMSyBpJzugxTor43XZSX5oARSTsHBCcGhrTM6GVni
     //     "0x0E69826457632B4c2d778190f3af6Bc8535d9235", // 5DfZ9PkYnkjSSxCHxtkfLC6n7RJ2rkJTLZ5sEecQdYsoktwW
     //   ]
     // );
-    // const tx = await contract.addStakeLimits([64], [ethers.parseUnits("20.17899", 9)], [MaxUint256]);
-    // const tx = await contract.removeStakeLimits([64], [0]);
-    // const tx = await contract.addStakeToRootFull();
+    // const tx = await contract2.addStakeLimits([64], [ethers.parseUnits("0.1", 9)], [MaxUint256]);
+    // const tx = await contract2.removeStakeLimits([0], [0]);
+    // const tx = await contract2.addStakeToRootFull();
     // const tx = await contract.setConfig("0xD40D0982c289A1521255641cd2E8729dbC6f27b9", "0x50dbcdc45a9374a904ea910ebc13e33a138d7953fd4da8b13ea4aba0668b3fde");
-    // const tx = await contract.removeStakeFromRootFull();
+    // const tx = await contract2.removeStakeFromRootFull();
     // const tx = await contract.removeStakeFromRoot(parseUnits("1", 9));
     // const old = await contract2.getTradingInfo();
     // let list = [], limitPrices = [];
@@ -112,10 +114,11 @@ async function main(): Promise<void> {
     // const tx = await contract.setLimitPrices(list, limitPrices);
     // const tx = await contract.setRock();
     // const tx = await contract.unRock();
-    // const tx = await contract.setWithdrawer("0xe2fc9873166079715d80375ecd52d545cb284fdb");
+    // const tx = await contract.setWithdrawer("0x024326Bf8D2db920fa20e56A89bc102aeCCeD4eC");
+    // const tx = await contract2.moveStakeAll("0x5bc73267f9990b1554109dc41e624a7dab56b1128f1ef2f62f6314294c038f9d");
     // const tx = await contract.withdrawSmall(
     //   "0xe2fc9873166079715d80375ecd52d545cb284fdb",
-    //   ethers.parseEther("0.1")
+    //   ethers.parseEther("1")
     // );
     // const tx = await contract.withdrawBig(
     //   "0xe2fc9873166079715d80375ecd52d545cb284fdb",
@@ -128,18 +131,20 @@ async function main(): Promise<void> {
     // const receipt = await tx.wait();
     // console.log("Transaction confirmed in block:", receipt!.blockNumber);
 
-    const newContractBalance = await provider.getBalance(CONTRACT_ADDRESS);
-    const newOwnerBalance = await provider.getBalance(signer.address);
-    console.log("\nFinal balances:");
-    console.log(
-      "Contract balance:",
-      ethers.formatEther(newContractBalance),
-      "TAO",
-    );
-    console.log("Owner balance:", ethers.formatEther(newOwnerBalance), "TAO");
+    // const newContractBalance = await provider.getBalance(CONTRACT_ADDRESS);
+    // const newOwnerBalance = await provider.getBalance(signer.address);
+    // console.log("\nFinal balances:");
+    // console.log(
+    //   "Contract balance:",
+    //   ethers.formatEther(newContractBalance),
+    //   "TAO",
+    // );
+    // console.log("Owner balance:", ethers.formatEther(newOwnerBalance), "TAO");
     const tradingInfo = await contract.getTradingInfo();
     const notStakedNetuids: number[] = [];
+    const blacklistedNetuids: number[] = [12, 29, 40, 80, 104, 116, 4, 9, 17, 19, 44, 51, 56, 62, 64, 68, 120];
     for (let i = 1; i < 129; i ++) {
+      if (blacklistedNetuids.includes(i)) continue;
       let alphaPrice = Number(tradingInfo.alphaPrices[i]);
       let limitPrice = Number(tradingInfo.limitPrices[i]);
       if (limitPrice == 0) limitPrice = 1, alphaPrice = 1;
@@ -167,6 +172,10 @@ async function main(): Promise<void> {
       console.error("Contract is rocked (panic-locked); call unRock first");
     } else if (msg.includes("NotWithdrawer")) {
       console.error("Caller is not the withdrawer");
+    } else if (msg.includes("NotOwnerOrWithdrawer")) {
+      console.error("Caller is neither the owner nor the withdrawer");
+    } else if (msg.includes("NotOwner")) {
+      console.error("Caller is not the owner");
     } else if (msg.includes("InvalidAddress")) {
       console.error("Invalid address argument (zero address?)");
     } else if (msg.includes("InvalidBytesKey")) {
@@ -177,8 +186,6 @@ async function main(): Promise<void> {
       console.error("ETH transfer to recipient failed");
     } else if (msg.includes("FunctionNotFound")) {
       console.error("Fallback hit: function selector not found");
-    } else if (msg.includes("Ownable: caller is not the owner")) {
-      console.error("Only the contract owner can call this function");
     } else if (msg.includes("insufficient funds")) {
       console.error("Insufficient funds for gas");
     } else {

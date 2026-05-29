@@ -3,7 +3,7 @@ import readline from "readline";
 import { blake2b } from "@noble/hashes/blake2b";
 import "dotenv/config";
 
-const CONTRACT_ADDRESS = "0xcFC33f8523008E7D128c24F72df9e482DE5d1159";
+const CONTRACT_ADDRESS = "0xD689D29f7eA0c511F4DDE84171b10D34078bb17C";
 
 const ABI = [
   "function owner() view returns (address)",

@@ -1,8 +1,8 @@
 {
   "network": "bittensor",
-  "address": "0xcFC33f8523008E7D128c24F72df9e482DE5d1159",
+  "address": "0xD689D29f7eA0c511F4DDE84171b10D34078bb17C",
   "deployer": "0xe2fc9873166079715D80375ECd52d545Cb284FDb",
-  "txHash": "0xfdbae15196da516094d7390875343e6f465c4f7e2ca342887a34a47240eb4b15",
-  "blockNumber": 8204054,
-  "deployedAt": "2026-05-17T14:07:53.745Z"
+  "txHash": "0x60bbb3a58ce412da668d0d4dee8639e4031252224ab9d121c2b5940d61a53baa",
+  "blockNumber": 8238938,
+  "deployedAt": "2026-05-22T10:25:14.068Z"
 }
