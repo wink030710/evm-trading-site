@@ -1,22 +1,22 @@
 {
   "_format": "hh-sol-artifact-1",
-  "contractName": "IERC165",
-  "sourceName": "@openzeppelin/contracts/utils/introspection/IERC165.sol",
+  "contractName": "IAddressMapping",
+  "sourceName": "contracts/TradingV8_2.sol",
   "abi": [
     {
       "inputs": [
         {
-          "internalType": "bytes4",
-          "name": "interfaceId",
-          "type": "bytes4"
+          "internalType": "address",
+          "name": "who",
+          "type": "address"
         }
       ],
-      "name": "supportsInterface",
+      "name": "addressMapping",
       "outputs": [
         {
-          "internalType": "bool",
+          "internalType": "bytes32",
           "name": "",
-          "type": "bool"
+          "type": "bytes32"
         }
       ],
       "stateMutability": "view",

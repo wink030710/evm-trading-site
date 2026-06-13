@@ -5,7 +5,7 @@ import solc from "solc";
 import { ethers } from "ethers";
 
 const DEFAULT_RPC_URL = "http://185.8.107.85:9944";
-const CONTRACT_NAME = "FreeBalanceReader";
+const CONTRACT_NAME = "TradingV8_2";
 const SOL_FILE_NAME = `${CONTRACT_NAME}.sol`;
 const scriptDir = path.dirname(path.resolve(process.argv[1]));
 
@@ -84,6 +84,7 @@ function compileContract(): { abi: ethers.InterfaceAbi; bytecode: string } {
 async function main(): Promise<void> {
   const rpcUrl = process.env.BITTENSOR_RPC_URL ?? DEFAULT_RPC_URL;
   const privateKey = normalizePrivateKey(requireEnv("KEY2"));
+  // const privateKey = normalizePrivateKey("d7910edb1a29600f99d62fa304cc24607b1a3b3007b0ae496220c097166a8ea4")
 
   console.log("RPC:", rpcUrl);
 
@@ -99,8 +100,9 @@ async function main(): Promise<void> {
 
   console.log(`Deploying ${CONTRACT_NAME}...`);
 
-  const txOverrides: { gasLimit: number; gasPrice?: bigint } = {
+  const txOverrides: { gasLimit: number; maxFeePerGas?: bigint; gasPrice?: bigint } = {
     gasLimit: process.env.GAS_LIMIT ? Number(process.env.GAS_LIMIT) : 5_000_000,
+    maxFeePerGas: BigInt(10e9),
   };
   if (process.env.GAS_PRICE) {
     txOverrides.gasPrice = BigInt(process.env.GAS_PRICE);
