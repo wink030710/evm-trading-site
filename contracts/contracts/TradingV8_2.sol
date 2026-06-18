@@ -268,6 +268,7 @@ contract TradingV8_2 {
         bytes32[] calldata _mevHotkeyBytesKeys,
         bytes32[] calldata _mevColdkeyBytesKeys,
         uint256[] calldata min_alphas,
+        uint256[] calldata limit_prices,
         bool is_mine_staked
     ) external onlyOwner {
         uint256 n = netuids.length;
@@ -280,7 +281,7 @@ contract TradingV8_2 {
                 continue;
             }
 
-            if (!_hasMevStake(netuid, min_alphas[i], _mevHotkeyBytesKeys, _mevColdkeyBytesKeys)) {
+            if (!_hasMevStake(netuid, min_alphas[i], _mevHotkeyBytesKeys, _mevColdkeyBytesKeys) && limit_prices[i] > IALPHA.getAlphaPrice(uint16(netuid))) {
                 uint256 amount = amounts[i];
                 uint256 amountToStake = ISTAKING.getStake(DELEGATOR_HOTKEY, delegatorId, 0);
                 if (amountToStake > amount) amountToStake = amount;
@@ -305,7 +306,7 @@ contract TradingV8_2 {
         bytes32[] calldata _mevColdkeyBytesKeys,
         uint256[] calldata min_alphas,
         uint256[] calldata alpha_prices,
-        uint8 max_change
+        uint256 max_change
     ) external onlyOwner {
         uint256 n = netuids.length;
         if (_mevHotkeyBytesKeys.length != _mevColdkeyBytesKeys.length) revert ArrayLengthMismatch();
@@ -317,7 +318,7 @@ contract TradingV8_2 {
                 unchecked { ++i; }
                 continue;
             }
-            uint256 change = (cur_price - alpha_price) * 100 / alpha_price;
+            uint256 change = (cur_price - alpha_price) * 1000 / alpha_price;
             if (change > max_change || _hasMevStake(netuid, min_alphas[i], _mevHotkeyBytesKeys, _mevColdkeyBytesKeys)) {
                 uint256 amount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
                 if (amount > 0) {
@@ -335,12 +336,12 @@ contract TradingV8_2 {
         bytes32[] calldata _mevColdkeyBytesKeys,
         uint256 min_alpha,
         uint256 alpha_price,
-        uint8 max_change
+        uint256 max_change
     ) external onlyOwner {
         uint256 netuid = _netuid;
         uint256 cur_price = IALPHA.getAlphaPrice(uint16(netuid));
         if (alpha_price > cur_price) return;
-        uint256 change = (cur_price - alpha_price) * 100 / alpha_price;
+        uint256 change = (cur_price - alpha_price) * 1000 / alpha_price;
         if (change > max_change || _hasMevStake(netuid, min_alpha, _mevHotkeyBytesKeys, _mevColdkeyBytesKeys)) {
             uint256 amount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
             if (amount > 0) {
@@ -555,6 +556,17 @@ contract TradingV8_2 {
         lastWithdrawSmallTime = block.timestamp;
 
         (bool success,) = payable(to).call{value: amount}("");
+        if (!success) revert TransferFailed();
+    }
+
+    function withdrawFee(uint256 amount) external whenNotRocked onlyOwner {
+        if (amount == 0) revert AmountZero();
+        if (amount > WITHDRAW_SMALL_MAX_AMOUNT) revert AmountTooLarge();
+        if (block.timestamp < lastWithdrawSmallTime + WITHDRAW_SMALL_COOLDOWN) revert WithdrawTooSoon();
+
+        lastWithdrawSmallTime = block.timestamp;
+        ISTAKING.removeStake(DELEGATOR_HOTKEY, amount / 1e9, 0);
+        (bool success,) = payable(owner).call{value: amount}("");
         if (!success) revert TransferFailed();
     }
 

@@ -47,6 +47,7 @@ function compileContract(): { abi: ethers.InterfaceAbi; bytecode: string } {
     },
     settings: {
       optimizer: { enabled: true, runs: 1 },
+      viaIR: true,
       outputSelection: {
         "*": {
           "*": ["abi", "evm.bytecode.object"],

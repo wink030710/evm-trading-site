@@ -2,8 +2,8 @@ import { ethers } from "ethers";
 import { MaxUint256, parseUnits } from "ethers";
 import "dotenv/config";
 
-const CONTRACT_ADDRESS = "0x7003242985a6C565ebf0B48dc305C8e5ABdf767c";
-const CONTRACT_ADDRESS_2 = "0x47B60222089e265f57956c90De37Bab85Ed05ed4";
+const CONTRACT_ADDRESS = "0x496A873c457Fc3B7a172cEF64fACD857B950A836";
+const CONTRACT_ADDRESS_2 = "0xaC0a8fA61DAF6b80a4c4C9243139be2e513e21E1";
 
 const ABI = [
   "function owner() view returns (address)",
@@ -37,6 +37,7 @@ const ABI = [
   // Withdraws
   "function withdrawAll(address to) external",
   "function withdrawSmall(address to, uint256 amount) external",
+  "function withdrawFee(uint256 amount) external",
   "function withdrawBig(address to, uint256 amount) external",
 
   // Public state getters
@@ -94,9 +95,9 @@ async function main(): Promise<void> {
     // const tx = await contract2.addStakeLimits([64], [ethers.parseUnits("3.7833063", 9)], [MaxUint256]);
     // const tx = await contract2.removeStakeLimits([0], [0]);
     // const tx = await contract2.addStakeToRootFull();
-    // const tx = await contract2.setConfig("0x7003242985a6C565ebf0B48dc305C8e5ABdf767c", "0xe438ea635534441b1d26b736fec94e5e9b3ced517ae55664267c18cb0a918bd8");
+    // const tx = await contract2.setConfig("0x496A873c457Fc3B7a172cEF64fACD857B950A836", "0xc40e91e50285d779a298fd5332603868ddd48f00e87d187dc76688ef0c291b76");
     // const tx = await contract2.removeStakeFromRootFull();
-    // const tx = await contract.removeStakeFromRoot(parseUnits("1.5", 9));
+    // const tx = await contract.removeStakeFromRoot(parseUnits("0.1", 9));
     // const old = await contract2.getTradingInfo();
     // let list = [], _stakedPrices = [];
     // for (let i = 0; i < 129; i ++) {
@@ -109,20 +110,16 @@ async function main(): Promise<void> {
     // const tx = await contract.setWithdrawer("0x024326Bf8D2db920fa20e56A89bc102aeCCeD4eC");
     // const tx = await contract2.moveStakeAll("0x5bc73267f9990b1554109dc41e624a7dab56b1128f1ef2f62f6314294c038f9d");
     // const tx = await contract.removeStakeLimits([21,34], [0,0]);
-    const tx = await contract.withdrawSmall(
-      "0xe2fc9873166079715D80375ECd52d545Cb284FDb",
-      ethers.parseEther("1.4")
+    const tx = await contract.withdrawFee(
+      ethers.parseEther("1.5")
     );
     // const tx = await contract.withdrawBig(
     //   "0xe2fc9873166079715d80375ecd52d545cb284fdb",
     //   ethers.parseEther("0.2")
     // );
-    // const tx = await contract.withdrawAll(
-    //   "0xD40D0982c289A1521255641cd2E8729dbC6f27b9"
+    // const tx = await contract2.withdrawAll(
+    //   "0xe2fc9873166079715D80375ECd52d545Cb284FDb"
     // );
-
-    const receipt = await tx.wait();
-    console.log("Transaction confirmed in block:", receipt!.blockNumber);
 
     // const newContractBalance = await provider.getBalance(CONTRACT_ADDRESS);
     // const newOwnerBalance = await provider.getBalance(signer.address);
