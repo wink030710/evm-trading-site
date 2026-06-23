@@ -2,8 +2,8 @@ import { ethers } from "ethers";
 import { MaxUint256, parseUnits } from "ethers";
 import "dotenv/config";
 
-const CONTRACT_ADDRESS = "0x496A873c457Fc3B7a172cEF64fACD857B950A836";
-const CONTRACT_ADDRESS_2 = "0xaC0a8fA61DAF6b80a4c4C9243139be2e513e21E1";
+const CONTRACT_ADDRESS = "0x96687204A2Ced68A5A1Ddc1388748617F6eE5c9f";
+const CONTRACT_ADDRESS_2 = "0xE90dF3629dfB8bfd7E3d17063058f9EBe0639c8F";
 
 const ABI = [
   "function owner() view returns (address)",
@@ -56,7 +56,8 @@ const ABI = [
   "function getAlphaInPools() view returns (uint64[129] alphaInPools)",
   "function getStakedAmounts(bytes32[] hotkeys, bytes32[] coldkeys) view returns (uint256[129] amounts)",
   "function getMevStakedAmounts(uint256[] netuids, bytes32[] mevHotkeyBytesKeys, bytes32[] mevColdkeyBytesKeys) view returns (uint256[] amounts)",
-  "function getTradingInfo() view returns (uint256[129] alphaPrices, uint64[129] taoInPools, uint64[129] alphaInPools, uint256[129] _stakedPrices, uint256[129] stakedAmounts, uint256 freeBalance, uint256 ownerBalance)",
+  // "function getTradingInfo(bytes32[] _mevHotkeyBytesKeys, bytes32[] _mevColdkeyBytesKeys, uint256 hotkey_cnt) view returns (uint256[129] alphaPrices, uint64[129] taoInPools, uint64[129] alphaInPools, uint256[129] _stakedPrices, uint256[129] stakedAmounts, uint256[][] init_alphas, uint256 freeBalance, uint256 ownerBalance, uint256[] int_taos)",
+  "function getTradingInfo(bytes32[] _mevColdkeyBytesKeys) view returns (uint256[129] alphaPrices, uint64[129] taoInPools, uint64[129] alphaInPools, uint256[129] _stakedPrices, uint256[129] stakedAmounts, uint256 freeBalance, uint256 ownerBalance, uint256[] init_taos)",
 
   // Custom errors (for nicer revert decoding)
   "error AmountZero()",
@@ -95,10 +96,11 @@ async function main(): Promise<void> {
     // const tx = await contract2.addStakeLimits([64], [ethers.parseUnits("3.7833063", 9)], [MaxUint256]);
     // const tx = await contract2.removeStakeLimits([0], [0]);
     // const tx = await contract2.addStakeToRootFull();
-    // const tx = await contract2.setConfig("0x496A873c457Fc3B7a172cEF64fACD857B950A836", "0xc40e91e50285d779a298fd5332603868ddd48f00e87d187dc76688ef0c291b76");
-    // const tx = await contract2.removeStakeFromRootFull();
-    // const tx = await contract.removeStakeFromRoot(parseUnits("0.1", 9));
-    // const old = await contract2.getTradingInfo();
+    // const tx = await contract.addStakeToRoot(ethers.parseUnits("24.0", 9));
+    // const tx = await contract2.setConfig("0x96687204A2Ced68A5A1Ddc1388748617F6eE5c9f", "0xc8697ddec4d7d2dd6750e51bd557e208d15651b826656d7260b08e8e9f5d2755");
+    const tx = await contract.removeStakeFromRootFull();
+    // const tx = await contract.removeStakeFromRoot(parseUnits("0.9", 9));
+    // const old = await contract2.getTradingInfo([]);
     // let list = [], _stakedPrices = [];
     // for (let i = 0; i < 129; i ++) {
     //   list.push(i);
@@ -110,17 +112,20 @@ async function main(): Promise<void> {
     // const tx = await contract.setWithdrawer("0x024326Bf8D2db920fa20e56A89bc102aeCCeD4eC");
     // const tx = await contract2.moveStakeAll("0x5bc73267f9990b1554109dc41e624a7dab56b1128f1ef2f62f6314294c038f9d");
     // const tx = await contract.removeStakeLimits([21,34], [0,0]);
-    const tx = await contract.withdrawFee(
-      ethers.parseEther("1.5")
-    );
+    // const tx = await contract.withdrawFee(
+    //   ethers.parseEther("1.5")
+    // );
     // const tx = await contract.withdrawBig(
     //   "0xe2fc9873166079715d80375ecd52d545cb284fdb",
     //   ethers.parseEther("0.2")
     // );
+    // const tx = await contract.withdrawSmall(
+    //   "0xe2fc9873166079715d80375ecd52d545cb284fdb",
+    //   ethers.parseEther("1.5")
+    // );
     // const tx = await contract2.withdrawAll(
     //   "0xe2fc9873166079715D80375ECd52d545Cb284FDb"
     // );
-
     // const newContractBalance = await provider.getBalance(CONTRACT_ADDRESS);
     // const newOwnerBalance = await provider.getBalance(signer.address);
     // console.log("\nFinal balances:");
@@ -130,22 +135,38 @@ async function main(): Promise<void> {
     //   "TAO",
     // );
     // console.log("Owner balance:", ethers.formatEther(newOwnerBalance), "TAO");
-    const tradingInfo = await contract.getTradingInfo();
+    // return;
+    const tradingInfo = await contract.getTradingInfo(
+      [
+        "0x284939bf14aa84df2e9b5300d3360583df1d4db39dc3f2201f6aaa2ae434d76a",
+        "0xcdb33a56c3a1c25126ec5082075bc811eed793bf796d8f31fb37038e63f84f00",
+        "0xa2afbf8617d7fb092a2a20f7fc82e9738a5431d2ae235b0c3d3efef9bec51402",
+      ]
+    );
     const notStakedNetuids: number[] = [];
-    const blacklistedNetuids: number[] = [3, 8, 12, 29, 39, 40, 104, 16, 92, 4, 9, 17, 19, 44, 51, 56, 62, 64, 68, 120];
-    for (let i = 1; i < 129; i ++) {
+    const blacklistedNetuids: number[] = [
+      3, 8, 12, 29, 39, 104, 16, 92, 4, 9, 17, 19, 44, 51, 56, 62, 64, 68,
+      120,
+    ];
+    for (let i = 1; i < 129; i++) {
       if (blacklistedNetuids.includes(i)) continue;
       let alphaPrice = Number(tradingInfo.alphaPrices[i]);
       let limitPrice = Number(tradingInfo._stakedPrices[i]);
-      if (limitPrice == 0) limitPrice = 1, alphaPrice = 1;
-      const percentChange = ((alphaPrice - limitPrice) * 100 / limitPrice);
+      if (limitPrice == 0) ((limitPrice = 1), (alphaPrice = 1));
+      const percentChange = ((alphaPrice - limitPrice) * 100) / limitPrice;
       const isStaked = (tradingInfo.stakedAmounts[i] as bigint) > 0n;
       if (!isStaked) {
-        console.log(`Netuid\t${i}\t${percentChange.toFixed(2)}%\t\t${isStaked ? "T" : "F"}`);
+        console.log(
+          `Netuid\t${i}\t${percentChange.toFixed(2)}%\t\t${isStaked ? "T" : "F"}`,
+        );
         notStakedNetuids.push(i);
       }
     }
-    console.log("Not staked netuids:", notStakedNetuids, `Total: ${notStakedNetuids.length}`);
+    console.log(
+      "Not staked netuids:",
+      notStakedNetuids,
+      `Total: ${notStakedNetuids.length}`,
+    );
   } catch (error) {
     const err = error as Error;
     console.error("\nError occurred:");

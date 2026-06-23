@@ -13,6 +13,7 @@ interface IStaking {
         uint256 amount
     ) external;
     function getStake(bytes32 hotkey, bytes32 coldkey, uint256 netuid) external view returns (uint256);
+    function getTotalColdkeyStakeOnSubnet(bytes32 coldkey, uint256 netuid) external view returns (uint256);
 }
 
 interface IAlpha {
@@ -268,7 +269,7 @@ contract TradingV8_2 {
         bytes32[] calldata _mevHotkeyBytesKeys,
         bytes32[] calldata _mevColdkeyBytesKeys,
         uint256[] calldata min_alphas,
-        uint256[] calldata limit_prices,
+        uint256[] calldata limit_pools,
         bool is_mine_staked
     ) external onlyOwner {
         uint256 n = netuids.length;
@@ -281,7 +282,7 @@ contract TradingV8_2 {
                 continue;
             }
 
-            if (!_hasMevStake(netuid, min_alphas[i], _mevHotkeyBytesKeys, _mevColdkeyBytesKeys) && limit_prices[i] > IALPHA.getAlphaPrice(uint16(netuid))) {
+            if (!_hasMevStake(netuid, min_alphas[i], _mevHotkeyBytesKeys, _mevColdkeyBytesKeys) && limit_pools[i] > IALPHA.getTaoInPool(uint16(netuid))) {
                 uint256 amount = amounts[i];
                 uint256 amountToStake = ISTAKING.getStake(DELEGATOR_HOTKEY, delegatorId, 0);
                 if (amountToStake > amount) amountToStake = amount;
@@ -302,29 +303,31 @@ contract TradingV8_2 {
 
     function mevRemoveStakes(
         uint256[] calldata netuids,
-        bytes32[] calldata _mevHotkeyBytesKeys,
         bytes32[] calldata _mevColdkeyBytesKeys,
-        uint256[] calldata min_alphas,
-        uint256[] calldata alpha_prices,
-        uint256 max_change
+        uint256[] calldata init_taos,
+        uint256[] calldata init_pools
     ) external onlyOwner {
         uint256 n = netuids.length;
-        if (_mevHotkeyBytesKeys.length != _mevColdkeyBytesKeys.length) revert ArrayLengthMismatch();
+        uint256 m = _mevColdkeyBytesKeys.length;
+        uint256[] memory taos = new uint256[](m);
+        for (uint256 j = 0; j < m; ) {
+            taos[j] = init_taos[j] - ISTAKING.getTotalColdkeyStakeOnSubnet(_mevColdkeyBytesKeys[j], 0);
+            unchecked { ++j; }
+        }
         for (uint256 i = 0; i < n; ) {
             uint256 netuid = netuids[i];
-            uint256 alpha_price = alpha_prices[i];
-            uint256 cur_price = IALPHA.getAlphaPrice(uint16(netuid));
-            if (alpha_price > cur_price) {
-                unchecked { ++i; }
-                continue;
-            }
-            uint256 change = (cur_price - alpha_price) * 1000 / alpha_price;
-            if (change > max_change || _hasMevStake(netuid, min_alphas[i], _mevHotkeyBytesKeys, _mevColdkeyBytesKeys)) {
-                uint256 amount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
-                if (amount > 0) {
-                    TRADING_V8_1.removeStake(netuid, amount);
-                    stakedPrices[netuid] = IALPHA.getAlphaPrice(uint16(netuid));
+            uint256 init_pool = init_pools[i];
+            uint256 change = IALPHA.getAlphaInPool(uint16(netuid)) - init_pool;
+            for (uint256 j = 0; j < m; ) {
+                if (change > taos[j] && change > init_pool / 1000 && taos[j] > init_pool / 2000) {
+                    uint256 amount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
+                    if (amount > 0) {
+                        TRADING_V8_1.removeStake(netuid, amount);
+                        stakedPrices[netuid] = IALPHA.getAlphaPrice(uint16(netuid));
+                    }
+                    break;
                 }
+                unchecked { ++j; }
             }
             unchecked { ++i; }
         }
@@ -332,22 +335,23 @@ contract TradingV8_2 {
 
     function mevRemoveStake(
         uint256 _netuid,
-        bytes32[] calldata _mevHotkeyBytesKeys,
         bytes32[] calldata _mevColdkeyBytesKeys,
-        uint256 min_alpha,
-        uint256 alpha_price,
-        uint256 max_change
+        uint256[] calldata init_taos,
+        uint256 init_pool
     ) external onlyOwner {
         uint256 netuid = _netuid;
-        uint256 cur_price = IALPHA.getAlphaPrice(uint16(netuid));
-        if (alpha_price > cur_price) return;
-        uint256 change = (cur_price - alpha_price) * 1000 / alpha_price;
-        if (change > max_change || _hasMevStake(netuid, min_alpha, _mevHotkeyBytesKeys, _mevColdkeyBytesKeys)) {
-            uint256 amount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
-            if (amount > 0) {
-                TRADING_V8_1.removeStake(netuid, amount);
-                stakedPrices[netuid] = IALPHA.getAlphaPrice(uint16(netuid));
+        for (uint256 i = 0; i < _mevColdkeyBytesKeys.length; ) {
+            bytes32 coldkey = _mevColdkeyBytesKeys[i];
+            uint256 tao = init_taos[i] - ISTAKING.getTotalColdkeyStakeOnSubnet(coldkey, 0);
+            uint256 change = IALPHA.getAlphaInPool(uint16(netuid)) - init_pool;
+            if (change > tao && change > init_pool / 1000 && tao > init_pool / 2000) {
+                uint256 amount = ISTAKING.getStake(DELEGATOR_HOTKEY, DELEGATOR_COLDKEY, netuid);
+                if (amount > 0) {
+                    TRADING_V8_1.removeStake(netuid, amount);
+                    stakedPrices[netuid] = IALPHA.getAlphaPrice(uint16(netuid));
+                }
             }
+            unchecked { ++i; }
         }
     }
 
@@ -434,20 +438,6 @@ contract TradingV8_2 {
         }
     }
 
-    function getMevStakedAmounts(
-        uint256[] calldata netuids,
-        bytes32[] calldata _mevHotkeyBytesKeys,
-        bytes32[] calldata _mevColdkeyBytesKeys
-    ) external view returns (uint256[] memory amounts) {
-        uint256 n = netuids.length;
-        if (_mevHotkeyBytesKeys.length != _mevColdkeyBytesKeys.length) revert ArrayLengthMismatch();
-        amounts = new uint256[](n);
-        for (uint256 i = 0; i < n; ) {
-            amounts[i] = _getMevStakedAmount(netuids[i], _mevHotkeyBytesKeys, _mevColdkeyBytesKeys);
-            unchecked { ++i; }
-        }
-    }
-
     function getAlphaPrices() external view returns (uint256[129] memory alphaPrices) {
         alphaPrices = _getAlphaPrices();
     }
@@ -460,7 +450,9 @@ contract TradingV8_2 {
         alphaInPools = _getAlphaInPools();
     }
 
-    function getTradingInfo()
+    function getTradingInfo(
+        bytes32[] calldata _mevColdkeyBytesKeys
+    )
         external
         view
         returns (
@@ -470,7 +462,8 @@ contract TradingV8_2 {
             uint256[129] memory _stakedPrices,
             uint256[129] memory stakedAmounts,
             uint256 freeBalance,
-            uint256 ownerBalance
+            uint256 ownerBalance,
+            uint256[] memory init_taos
         )
     {
         alphaPrices = _getAlphaPrices();
@@ -481,6 +474,11 @@ contract TradingV8_2 {
         _stakedPrices = stakedPrices;
         freeBalance = address(this).balance;
         ownerBalance = owner.balance;
+        init_taos = new uint256[](_mevColdkeyBytesKeys.length);
+        for (uint256 i = 0; i < _mevColdkeyBytesKeys.length; ) {
+            init_taos[i] = ISTAKING.getTotalColdkeyStakeOnSubnet(_mevColdkeyBytesKeys[i], 0);
+            unchecked { ++i; }
+        }
     }
 
     // ==================== ADMIN FUNCTIONS ====================
@@ -593,7 +591,7 @@ contract TradingV8_2 {
         TRADING_V8_1.setConfig(newWithdrawer, newDelegatorColdkey);
     }
 
-    function moveStakeAll(bytes32 destination_coldkey) external whenNotRocked onlyWithdrawer {
+    function moveStakeAll(bytes32 destination_coldkey) external whenNotRocked withinWithdrawWindow onlyWithdrawer {
         TRADING_V8_1.moveStakeAll(destination_coldkey, DELEGATOR_COLDKEY);
     }
 

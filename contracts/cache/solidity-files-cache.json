@@ -818,8 +818,8 @@
       ]
     },
     "/root/bittensor/evm-trading-site/contracts/contracts/TradingV8_2.sol": {
-      "lastModificationDate": 1781496573676,
-      "contentHash": "b0f6c51ce16c15cefabacb51cd1b2e70",
+      "lastModificationDate": 1782139950137,
+      "contentHash": "78af385976214776480a00bc9c37d6f4",
       "sourceName": "contracts/TradingV8_2.sol",
       "solcConfig": {
         "version": "0.8.22",
