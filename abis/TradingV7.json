@@ -7,6 +7,6 @@
   "function mevAddStakes(uint256[] calldata netuids, uint256[] calldata amounts, bytes32[] calldata _mevHotkeyBytesKeys, bytes32[] calldata _mevColdkeyBytesKeys) external payable",
   "function mevRemoveStakes(uint256[] calldata netuids, bytes32[] calldata _mevHotkeyBytesKeys, bytes32[] calldata _mevColdkeyBytesKeys) external payable",
   "function resetLimitPrices(uint256[] calldata netuids) external",
-  "function getTradingInfo() external view returns (uint256[129] memory alphaPrices, uint64[129] memory taoInPools, bool[129] memory staked, uint256[129] memory limitPrices, uint256[129] memory stakedAmounts, uint256[] memory mevFreeBalances, uint256 freeBalance, uint256 ownerBalance)",
+  "function getTradingInfo(bytes32[] _mevColdkeyBytesKeys) view returns (uint256[129] alphaPrices, uint64[129] taoInPools, uint64[129] alphaInPools, uint256[129] _stakedPrices, uint256[129] stakedAmounts, uint256 freeBalance, uint256 ownerBalance, uint256[] init_taos)",
   "function lastStakeTimestamps(uint256) view returns (uint256)"
 ]

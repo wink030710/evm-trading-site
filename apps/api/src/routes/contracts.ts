@@ -505,14 +505,14 @@ export function createContractsRouter() {
       const amountUnits = parseAmount(body.data.amount);
 
       const provider = await getProvider();
-      const contractBal = await provider.getBalance(record.address);
-      const totalRequired = amountUnits * BigInt(netuids.length);
-      if (totalRequired > contractBal) {
-        return res.status(400).json({
-          error: "insufficient_contract_balance",
-          contractBalanceWei: contractBal.toString(),
-        });
-      }
+      // const contractBal = await provider.getBalance(record.address);
+      // const totalRequired = amountUnits * BigInt(netuids.length);
+      // if (totalRequired > contractBal) {
+      //   return res.status(400).json({
+      //     error: "insufficient_contract_balance",
+      //     contractBalanceWei: contractBal.toString(),
+      //   });
+      // }
 
       const contract =
         typeof record.ownerIndex === "number"
@@ -523,7 +523,8 @@ export function createContractsRouter() {
             )
           : await getContract(record.address, abiFile, record.ownerAddress);
       const limits = netuids.map(() => MaxUint256);
-      const amounts = netuids.map(() => amountUnits);
+      const amounts = netuids.map(() => BigInt(amountUnits / BigInt(1e9)));
+      console.log("amounts", amounts);
       const tx = await contract.addStakeLimits(netuids, amounts, limits);
       const receipt = await tx.wait();
       return res.json({
@@ -754,35 +755,25 @@ export function createContractsRouter() {
             )
           : await getContract(record.address, abiFile, record.ownerAddress);
       if (record.type === "TradingV7") {
-        const r = await contract.getTradingInfo();
+        const r = await contract.getTradingInfo([]);
         const prices = r.alphaPrices ?? r[0];
         const taoInPool = r.taoInPools ?? r[1];
-        const staked = r.staked ?? r[2];
         const limitPrices = r.limitPrices ?? r[3];
         const stakedAmounts = r.stakedAmounts ?? r[4];
         for (let i = 0; i < 129; i++) {
-          if (!staked[i]) continue;
+          const alphaAmount = stakedAmounts[i];
+          const limitPrice = i == 0 ? 1e18 : limitPrices[i];
+          if (alphaAmount < 1e7) continue;
           stakes.push({
             netuid: i,
-            taoAmount: ((Number(stakedAmounts[i]) * Number(prices[i])) / 1e27).toFixed(5),
-            stakedPrice: (Number(limitPrices[i]) / 1e18).toFixed(5),
+            taoAmount: ((Number(alphaAmount) * Number(prices[i])) / 1e27).toFixed(5),
+            stakedPrice: (Number(limitPrice) / 1e18).toFixed(5),
             currentPrice: (Number(prices[i]) / 1e18).toFixed(5),
             taoInPool: (Number(taoInPool[i]) / 1e9).toFixed(2),
-            alphaAmount: (Number(stakedAmounts[i]) / 1e9).toFixed(2),
+            alphaAmount: (Number(alphaAmount) / 1e9).toFixed(2),
             stakeTime: null,
           });
         }
-        await Promise.all(
-          stakes.map(async (stake) => {
-            try {
-              const raw = await contract.lastStakeTimestamps(stake.netuid);
-              const n = Number(raw);
-              stake.stakeTime = Number.isFinite(n) && n > 0 ? n : null;
-            } catch {
-              stake.stakeTime = null;
-            }
-          }),
-        );
       }
       return res.json({ stakes });
     } catch (e: any) {

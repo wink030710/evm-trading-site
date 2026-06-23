@@ -98,7 +98,7 @@ async function main(): Promise<void> {
     // const tx = await contract2.addStakeToRootFull();
     // const tx = await contract.addStakeToRoot(ethers.parseUnits("24.0", 9));
     // const tx = await contract2.setConfig("0x96687204A2Ced68A5A1Ddc1388748617F6eE5c9f", "0xc8697ddec4d7d2dd6750e51bd557e208d15651b826656d7260b08e8e9f5d2755");
-    const tx = await contract.removeStakeFromRootFull();
+    // const tx = await contract.removeStakeFromRootFull();
     // const tx = await contract.removeStakeFromRoot(parseUnits("0.9", 9));
     // const old = await contract2.getTradingInfo([]);
     // let list = [], _stakedPrices = [];
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
     //   _stakedPrices.push(old._stakedPrices[i]);
     // }
     // const tx = await contract.setStakedPrices(list, _stakedPrices);
-    // const tx = await contract.setRock();
+    // const tx = await contract.setRock({ maxFeePerGas: BigInt(11e9), maxPriorityFeePerGas: BigInt(1e9) });
     // const tx = await contract.unRock();
     // const tx = await contract.setWithdrawer("0x024326Bf8D2db920fa20e56A89bc102aeCCeD4eC");
     // const tx = await contract2.moveStakeAll("0x5bc73267f9990b1554109dc41e624a7dab56b1128f1ef2f62f6314294c038f9d");

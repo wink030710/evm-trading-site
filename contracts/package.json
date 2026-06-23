@@ -12,7 +12,8 @@
     "send:bsc-to-bittensor": "hardhat run scripts/sendBscToBittensor.ts --network bsc",
     "verify-peer:base": "hardhat run scripts/verifyPeer.ts --network base",
     "verify-peer:bsc": "hardhat run scripts/verifyPeer.ts --network bsc",
-    "verify-peer:bittensor": "hardhat run scripts/verifyPeer.ts --network bittensor-evm"
+    "verify-peer:bittensor": "hardhat run scripts/verifyPeer.ts --network bittensor-evm",
+    "test:vault": "ts-node scripts/test.ts"
   },
   "devDependencies": {
     "@layerzerolabs/lz-evm-messagelib-v2": "^3.0.148",
@@ -28,6 +29,7 @@
   },
   "dependencies": {
     "@layerzerolabs/oapp-evm": "^0.4.1",
+    "@metamask/browser-passworder": "^6.0.0",
     "solc": "^0.8.34"
   },
   "overrides": {

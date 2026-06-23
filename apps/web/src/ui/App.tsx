@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
 import { QRCodeSVG } from 'qrcode.react'
 import {
-  addStake,
   clearToken,
   createContract,
   deleteContract,
@@ -22,16 +21,13 @@ import {
   login,
   openLogsStream,
   refreshSubnetIdentity,
-  removeStake,
   restartLogsServer,
   stopLogsServer,
-  resetStake,
   setApiErrorNotifier,
   setToken,
   twoFaDisable,
   twoFaSetupConfirm,
   twoFaSetupStart,
-  withdraw,
   type ContractRecord,
   type DtaoSubnetRow,
   type DelegateTxRow,
@@ -973,6 +969,34 @@ type DashboardRow = {
   fee: number | null
 }
 
+function BalanceStatGrid(props: {
+  total: string | null
+  free: string | null
+  staked: string | null
+  fee: string | null
+  feeError?: string | null
+}) {
+  const items = [
+    { label: 'Total', value: props.total },
+    { label: 'Free', value: props.free },
+    { label: 'Staked', value: props.staked },
+    {
+      label: 'Fee',
+      value: props.fee ?? (props.feeError ? `(${props.feeError})` : null)
+    }
+  ]
+  return (
+    <div className="statGrid">
+      {items.map((item) => (
+        <div key={item.label} className="statCard">
+          <div className="statCardLabel">{item.label}</div>
+          <div className="statCardValue mono">{item.value ?? '—'}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function timeAgo(iso: string): string {
   const t = Date.parse(iso)
   if (!Number.isFinite(t)) return iso
@@ -1673,7 +1697,12 @@ function Dashboard(props: { onError: (e: string | null) => void }) {
     <div className="layoutSingle">
       <div className="card">
         <div className="rowWrap" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 className="h1" style={{ margin: 0 }}>Dashboard</h2>
+          <div>
+            <h2 className="h1" style={{ margin: 0 }}>Dashboard</h2>
+            <div className="muted" style={{ marginTop: 4, fontSize: 14 }}>
+              Portfolio overview across {rows.length} contract{rows.length === 1 ? '' : 's'}
+            </div>
+          </div>
           <button
             type="button"
             className="btn"
@@ -1689,83 +1718,103 @@ function Dashboard(props: { onError: (e: string | null) => void }) {
             <div className="muted">Error</div>
             <div>{error}</div>
           </div>
-        ) : loading ? (
+        ) : loading && rows.length === 0 ? (
           <div className="muted">Loading…</div>
         ) : (
-          <div className="dashboardTableWrap">
-            <table className="dashboardTable">
-              <thead>
-                <tr>
-                  <th>Contract</th>
-                  <th>Type</th>
-                  <th>TX</th>
-                  <th className="num">Stakes</th>
-                  <th className="num">Total</th>
-                  <th className="num">Free</th>
-                  <th className="num">Staked</th>
-                  <th className="num">Fee</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="dashboardTableRowClickable"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => navigate(`/contracts?id=${encodeURIComponent(r.id)}`)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        navigate(`/contracts?id=${encodeURIComponent(r.id)}`)
-                      }
-                    }}
-                  >
-                    <td>{r.name}</td>
-                    <td><span className="badge">{r.type}</span></td>
-                    <td>
-                      {r.ss58 ? (
-                        <Link
-                          to={`/transactions?nominator=${encodeURIComponent(r.ss58)}`}
-                          className="txnGoBtn"
-                          onClick={(e) => e.stopPropagation()}
-                          title="Open transactions"
-                          aria-label="Open transactions"
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M14 3h7v7" />
-                            <path d="M10 14L21 3" />
-                            <path d="M21 14v7h-7" />
-                            <path d="M3 10V3h7" />
-                            <path d="M3 21h7v-7" />
-                          </svg>
-                        </Link>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td className="mono num">{r.stakesCount === null ? '—' : r.stakesCount}</td>
-                    <td className="mono num">{fmt(r.total)}</td>
-                    <td className="mono num">{fmt(r.free)}</td>
-                    <td className="mono num">{fmt(r.staked)}</td>
-                    <td className="mono num">{fmt(r.fee)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="dashboardTableFoot">
-                  <th>Total</th>
-                  <th aria-hidden="true" />
-                  <th aria-hidden="true" />
-                  <th className="mono num">{sums.stakesCount}</th>
-                  <th className="mono num">{sums.total.toFixed(5)}</th>
-                  <th className="mono num">{sums.free.toFixed(5)}</th>
-                  <th className="mono num">{sums.staked.toFixed(5)}</th>
-                  <th className="mono num">{sums.fee.toFixed(5)}</th>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+          <>
+            <BalanceStatGrid
+              total={rows.length ? sums.total.toFixed(5) : null}
+              free={rows.length ? sums.free.toFixed(5) : null}
+              staked={rows.length ? sums.staked.toFixed(5) : null}
+              fee={rows.length ? sums.fee.toFixed(5) : null}
+            />
+            <div className="spacer20" />
+            {rows.length === 0 ? (
+              <div className="dashboardEmpty">
+                <div className="muted">No contracts yet</div>
+                <Link to="/contracts" className="btn btnPrimary" style={{ marginTop: 12 }}>
+                  Add a contract
+                </Link>
+              </div>
+            ) : (
+              <div className="dashboardTableWrap">
+                <table className="dashboardTable">
+                  <thead>
+                    <tr>
+                      <th>Contract</th>
+                      <th>Type</th>
+                      <th>TX</th>
+                      <th className="num">Stakes</th>
+                      <th className="num">Total</th>
+                      <th className="num">Free</th>
+                      <th className="num">Staked</th>
+                      <th className="num">Fee</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr
+                        key={r.id}
+                        className="dashboardTableRowClickable"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => navigate(`/contracts?id=${encodeURIComponent(r.id)}`)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            navigate(`/contracts?id=${encodeURIComponent(r.id)}`)
+                          }
+                        }}
+                      >
+                        <td>
+                          <div className="dashboardContractName">{r.name}</div>
+                        </td>
+                        <td><span className="badge">{r.type}</span></td>
+                        <td>
+                          {r.ss58 ? (
+                            <Link
+                              to={`/transactions?nominator=${encodeURIComponent(r.ss58)}`}
+                              className="txnGoBtn"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Open transactions"
+                              aria-label="Open transactions"
+                            >
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M14 3h7v7" />
+                                <path d="M10 14L21 3" />
+                                <path d="M21 14v7h-7" />
+                                <path d="M3 10V3h7" />
+                                <path d="M3 21h7v-7" />
+                              </svg>
+                            </Link>
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </td>
+                        <td className="mono num">{r.stakesCount === null ? '—' : r.stakesCount}</td>
+                        <td className="mono num">{fmt(r.total)}</td>
+                        <td className="mono num">{fmt(r.free)}</td>
+                        <td className="mono num">{fmt(r.staked)}</td>
+                        <td className="mono num">{fmt(r.fee)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="dashboardTableFoot">
+                      <th>Total</th>
+                      <th aria-hidden="true" />
+                      <th aria-hidden="true" />
+                      <th className="mono num">{sums.stakesCount}</th>
+                      <th className="mono num">{sums.total.toFixed(5)}</th>
+                      <th className="mono num">{sums.free.toFixed(5)}</th>
+                      <th className="mono num">{sums.staked.toFixed(5)}</th>
+                      <th className="mono num">{sums.fee.toFixed(5)}</th>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -2090,12 +2139,6 @@ function ContractsView(props: {
           contract={selected}
           refreshNonce={detailRefreshNonce}
           requestRefresh={() => setDetailRefreshNonce((n) => n + 1)}
-          onError={(e) => {
-            props.onError(e)
-          }}
-          onSuccess={props.onSuccess}
-          confirm={props.confirm}
-          setGlobalBusy={setGlobalBusy}
           subnetByNetuid={props.subnetByNetuid}
         />
       ) : (
@@ -2597,55 +2640,8 @@ function ContractDetail(props: {
   contract: ContractRecord
   refreshNonce: number
   requestRefresh: () => void
-  onError: (e: string | null) => void
-  onSuccess: (message: string) => void
-  confirm: (input: { title: string; message: string; confirmText?: string; cancelText?: string; danger?: boolean }) => Promise<boolean>
-  setGlobalBusy: (busy: boolean) => void
   subnetByNetuid: Map<number, { name: string; logoUrl: string | null }>
 }) {
-  const [netuid, setNetuid] = useState('')
-  const [amount, setAmount] = useState('')
-  const [withdrawAmount, setWithdrawAmount] = useState('')
-  const [withdrawTo, setWithdrawTo] = useState('')
-  const [withdrawTotp, setWithdrawTotp] = useState('')
-  const [twoFaRequired, setTwoFaRequired] = useState(false)
-
-  useEffect(() => {
-    get2FARequired()
-      .then((r) => setTwoFaRequired(r.required))
-      .catch(() => setTwoFaRequired(false))
-  }, [])
-
-  const parsedNetuids = useMemo(() => {
-    const raw = netuid.trim()
-    if (!raw) return [] as number[]
-    const parts = raw
-      .split(/,+/g)
-      .map((p) => p.trim())
-      .filter(Boolean)
-    const nums = parts
-      .map((p) => safeInt(p))
-      .filter((n): n is number => n !== null)
-    return Array.from(new Set(nums)).sort((a, b) => a - b)
-  }, [netuid])
-
-  const [touchedNetuid, setTouchedNetuid] = useState(false)
-  const [touchedAmount, setTouchedAmount] = useState(false)
-  const [touchedWithdraw, setTouchedWithdraw] = useState(false)
-  const [touchedWithdrawTo, setTouchedWithdrawTo] = useState(false)
-
-  const [actionError, setActionError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState<'add' | 'remove' | 'reset' | 'withdraw' | null>(null)
-
-  const actionsDisabled = submitting !== null
-  const canAddOrResetStake = props.contract.type === 'TradingV7'
-  const canRemoveStake = props.contract.type === 'MEV' || props.contract.type === 'TradingV7'
-
-  useEffect(() => {
-    props.setGlobalBusy(actionsDisabled)
-    return () => props.setGlobalBusy(false)
-  }, [actionsDisabled, props.setGlobalBusy])
-
   const [stakes, setStakes] = useState<StakeRow[]>([])
   const [stakesError, setStakesError] = useState<string | null>(null)
   const [stakesLoading, setStakesLoading] = useState(false)
@@ -2655,7 +2651,7 @@ function ContractDetail(props: {
     decimals: number
   }>(null)
   const [balancesError, setBalancesError] = useState<string | null>(null)
-  const [sorting, setSorting] = useState<{ key: 'netuid' | 'alpha' | 'tao' | 'pool' | 'pct' | 'time'; dir: 'asc' | 'desc' }>({
+  const [sorting, setSorting] = useState<{ key: 'netuid' | 'alpha' | 'tao' | 'pool' | 'pct'; dir: 'asc' | 'desc' }>({
     key: 'tao',
     dir: 'desc'
   })
@@ -2714,49 +2710,11 @@ function ContractDetail(props: {
     if (contractChanged) {
       setStakes([])
       setStakesError(null)
-      setActionError(null)
-      setTouchedNetuid(false)
-      setTouchedAmount(false)
-      setTouchedWithdraw(false)
-      setTouchedWithdrawTo(false)
     }
     refreshStakes(signal)
     refreshBalances(signal)
     return () => controller.abort()
   }, [props.contract.id, props.refreshNonce, refreshStakes, refreshBalances])
-
-  const parsedNetuid = useMemo(() => safeInt(netuid), [netuid])
-  const netuidOk = parsedNetuids.length > 0
-  const amountOk = useMemo(() => isLikelyDecimalAmount(amount), [amount])
-  const withdrawOk = useMemo(() => isLikelyDecimalAmount(withdrawAmount), [withdrawAmount])
-  const withdrawToValue = useMemo(() => {
-    const t = withdrawTo.trim()
-    return t ? t : props.contract.ownerAddress
-  }, [withdrawTo, props.contract.ownerAddress])
-  const withdrawToOk = useMemo(() => isLikelyAddress(withdrawToValue), [withdrawToValue])
-
-  const ownerBalUnits = useMemo(() => (balances ? safeBigIntString(balances.ownerBalanceWei) : null), [balances])
-  const contractBalUnits = useMemo(() => (balances ? safeBigIntString(balances.contractBalanceWei) : null), [balances])
-  const amountUnits = useMemo(() => {
-    if (!balances) return null
-    if (!amountOk) return null
-    return parseDecimalToUnits(normalizeDecimal(amount), balances.decimals)
-  }, [amount, amountOk, balances])
-  const withdrawUnits = useMemo(() => {
-    if (!balances) return null
-    if (!withdrawOk) return null
-    return parseDecimalToUnits(normalizeDecimal(withdrawAmount), balances.decimals)
-  }, [withdrawAmount, withdrawOk, balances])
-
-  const amountExceedsContract = useMemo(() => {
-    if (amountUnits === null || contractBalUnits === null) return false
-    return amountUnits > contractBalUnits
-  }, [amountUnits, contractBalUnits])
-
-  const withdrawExceedsContract = useMemo(() => {
-    if (withdrawUnits === null || contractBalUnits === null) return false
-    return withdrawUnits > contractBalUnits
-  }, [withdrawUnits, contractBalUnits])
 
   const ownerBalanceDisplay = useMemo(
     () => (balances ? formatUnitsLike(balances.ownerBalanceWei, balances.decimals) : null),
@@ -2766,41 +2724,6 @@ function ContractDetail(props: {
     () => (balances ? formatUnitsLike(balances.contractBalanceWei, balances.decimals) : null),
     [balances]
   )
-
-  const netuidError = useMemo(() => {
-    const v = netuid.trim()
-    if (!v) return 'netuid is required'
-    const invalid = v
-      .split(/,+/g)
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .some((p) => safeInt(p) === null)
-    if (invalid) return 'netuid must be a non-negative integer (or a comma-separated list like 1,2,3)'
-    if (parsedNetuids.length === 0) return 'netuid is required'
-    return null
-  }, [netuid, parsedNetuids.length])
-
-  const amountError = useMemo(() => {
-    const v = amount.trim()
-    if (!v) return 'amount is required'
-    if (!amountOk) return 'amount must be a number'
-    if (balances && amountExceedsContract) return `amount exceeds contract balance (max ${contractBalanceDisplay ?? ''})`
-    return null
-  }, [amount, amountOk, amountExceedsContract, balances, contractBalanceDisplay])
-
-  const withdrawToError = useMemo(() => {
-    const v = withdrawTo.trim()
-    if (v && !isLikelyAddress(v)) return 'invalid recipient address'
-    return null
-  }, [withdrawTo])
-
-  const withdrawAmountError = useMemo(() => {
-    const v = withdrawAmount.trim()
-    if (!v) return 'amount is required'
-    if (!withdrawOk) return 'amount must be a number'
-    if (balances && withdrawExceedsContract) return `amount exceeds contract balance (max ${contractBalanceDisplay ?? ''})`
-    return null
-  }, [withdrawAmount, withdrawOk, withdrawExceedsContract, balances, contractBalanceDisplay])
 
   const sortedStakes = useMemo(() => {
     const copy = [...stakes]
@@ -2831,15 +2754,6 @@ function ContractDetail(props: {
         if (ap !== null) return 1 * dir
         if (bp !== null) return -1 * dir
         return 0
-      }
-
-      if (sorting.key === 'time') {
-        const at = typeof a.stakeTime === 'number' && Number.isFinite(a.stakeTime) ? a.stakeTime : null
-        const bt = typeof b.stakeTime === 'number' && Number.isFinite(b.stakeTime) ? b.stakeTime : null
-        if (at === null && bt === null) return 0
-        if (at === null) return 1
-        if (bt === null) return -1
-        return (at === bt ? 0 : at > bt ? 1 : -1) * dir
       }
 
       const av = sorting.key === 'alpha' ? a.alphaAmount : a.taoAmount
@@ -2889,7 +2803,7 @@ function ContractDetail(props: {
       return false
     })
   }, [sortedStakes, stakesNetuidQuery])
-  const [stakesPageSize, setStakesPageSize] = useState(10)
+  const [stakesPageSize, setStakesPageSize] = useState(15)
   const [stakesPage, setStakesPage] = useState(0)
 
   useEffect(() => {
@@ -2949,335 +2863,56 @@ function ContractDetail(props: {
 
   return (
     <div>
-      <div className="rowWrap" style={{ justifyContent: 'space-between' }}>
+      <BalanceStatGrid
+        total={totalBalanceDisplay}
+        free={contractBalanceDisplay}
+        staked={totals.taoNum !== null ? totals.taoNum.toFixed(5) : null}
+        fee={ownerBalanceDisplay}
+        feeError={balancesError}
+      />
+
+      <div className="spacer20" />
+
+      <div className="row" style={{ justifyContent: 'space-between' }}>
         <div>
-          <div className="rowWrap" style={{ alignItems: 'baseline', gap: 12 }}>
-            <div className="muted" style={{ fontSize: 15 }}>
-              Total:
-            </div>
-            <div className="mono" style={{ fontSize: 15 }}>
-              {totalBalanceDisplay ?? '—'}
-            </div>
+          <div className="sectionTitle">Current stakes</div>
+        </div>
 
-            <div className="muted" style={{ fontSize: 15 }}>
-              Free:
-            </div>
-            <div className="mono" style={{ fontSize: 15 }}>
-              {contractBalanceDisplay ?? '—'}
-            </div>
-
-            <div className="muted" style={{ fontSize: 15 }}>
-              Staked:
-            </div>
-            <div className="mono" style={{ fontSize: 15 }}>
-              {totals.taoNum !== null ? totals.taoNum.toFixed(5) : '—'}
-            </div>
-
-            <div className="muted" style={{ fontSize: 15 }}>
-              Fee:
-            </div>
-            <div className="mono" style={{ fontSize: 15 }}>
-              {ownerBalanceDisplay ?? (balancesError ? `(${balancesError})` : '—')}
-            </div>
-          </div>
+        <div className="rowWrap" style={{ alignItems: 'center' }}>
+          {stakesLoading ? (
+            <svg width="16" height="16" viewBox="0 0 50 50" aria-hidden="true">
+              <circle
+                cx="25"
+                cy="25"
+                r="20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="6"
+                strokeLinecap="round"
+                strokeDasharray="31.4 31.4"
+              >
+                <animateTransform
+                  attributeName="transform"
+                  type="rotate"
+                  from="0 25 25"
+                  to="360 25 25"
+                  dur="1s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+            </svg>
+          ) : null}
         </div>
       </div>
 
-      <div className="spacer16" />
+      <div className="spacer12" />
 
-      <div className="detailGrid">
+      {stakesError ? <div className="errorText">{stakesError}</div> : null}
+
+      {stakesLoading && !stakes.length ? (
+        <div className="muted">Loading…</div>
+      ) : (
         <div>
-          <div className="muted">Actions (backend-signed)</div>
-          <div className="spacer12" />
-
-          <div className="actionsGrid">
-            <div>
-              <div className="label">Netuid</div>
-              <input
-                className={`input ${touchedNetuid && netuidError ? 'inputError' : ''}`}
-                value={netuid}
-                disabled={actionsDisabled || !canAddOrResetStake}
-                onChange={(e) => {
-                  setTouchedNetuid(true)
-                  setNetuid(e.target.value)
-                }}
-                placeholder="e.g. 1 or 1,2,3"
-              />
-              <div className="fieldErrorSlot">
-                {touchedNetuid && netuidError ? <div className="errorText">{netuidError}</div> : null}
-              </div>
-            </div>
-
-            <div>
-              <div className="label">Amount</div>
-              <input
-                className={`input ${touchedAmount && amountError ? 'inputError' : ''}`}
-                value={amount}
-                disabled={actionsDisabled || !canAddOrResetStake}
-                onChange={(e) => {
-                  setTouchedAmount(true)
-                  setAmount(e.target.value)
-                }}
-                placeholder="e.g. 1.5"
-              />
-              <div className="fieldErrorSlot">
-                {touchedAmount && amountError ? <div className="errorText">{amountError}</div> : null}
-              </div>
-            </div>
-          </div>
-
-          <div className="spacer12" />
-
-          {actionError ? <div className="errorText">{actionError}</div> : null}
-
-          <div className="spacer12" />
-          <div className="rowWrap">
-            <button
-              className="btn btnPrimary"
-              disabled={actionsDisabled || !canAddOrResetStake}
-              onClick={async () => {
-                props.onError(null)
-                setActionError(null)
-                setTouchedWithdraw(false)
-                setTouchedWithdrawTo(false)
-                setTouchedNetuid(true)
-                setTouchedAmount(true)
-                if (netuidError || amountError) return
-                if (parsedNetuids.length === 0) return
-
-                const netuidsValue = parsedNetuids
-
-                let nextBalances = balances
-                if (!nextBalances) {
-                  try {
-                    const resp = await getBalances(props.contract.id)
-                    nextBalances = {
-                      ownerBalanceWei: resp.ownerBalanceWei,
-                      contractBalanceWei: resp.contractBalanceWei,
-                      decimals: resp.decimals
-                    }
-                    setBalances(nextBalances)
-                  } catch {
-                    // ignore; backend will enforce
-                  }
-                }
-
-                if (nextBalances) {
-                  const contractWei = safeBigIntString(nextBalances.contractBalanceWei)
-                  const units = parseDecimalToUnits(normalizeDecimal(amount), nextBalances.decimals)
-                  if (contractWei !== null && units !== null && units * BigInt(netuidsValue.length) > contractWei) {
-                    setTouchedAmount(true)
-                    return
-                  }
-                }
-
-                const ok = await props.confirm({
-                  title: 'Submit add stake',
-                  message: `netuids=${netuidsValue.join(',')}\namount=${normalizeDecimal(amount)}`,
-                  confirmText: 'Submit',
-                  cancelText: 'Cancel'
-                })
-                if (!ok) return
-
-                setSubmitting('add')
-                try {
-                  const resp = await addStake(props.contract.id, {
-                    netuids: netuidsValue,
-                    amount: normalizeDecimal(amount)
-                  })
-                  props.requestRefresh()
-                  const hash =
-                    resp && typeof resp === 'object' && 'hash' in resp && typeof (resp as any).hash === 'string'
-                      ? (resp as any).hash
-                      : null
-                  props.onSuccess(hash ? `Add stake submitted (${shortHash(hash)})` : 'Add stake submitted')
-                } catch (e: any) {
-                  const msg = e?.message || 'add_stake_failed'
-                  props.onError(msg)
-                  setActionError(msg)
-                } finally {
-                  setSubmitting(null)
-                }
-              }}
-            >
-              {submitting === 'add' ? 'Submitting…' : 'Add stake'}
-            </button>
-          </div>
-
-          <div className="spacer16" />
-          <div className="label">Withdraw recipient address (optional)</div>
-          <input
-            className={`input mono ${touchedWithdrawTo && withdrawToError ? 'inputError' : ''}`}
-            value={withdrawTo}
-            disabled={actionsDisabled}
-            onChange={(e) => {
-              setTouchedWithdrawTo(true)
-              setWithdrawTo(e.target.value)
-            }}
-            placeholder={shortAddress(props.contract.ownerAddress)}
-          />
-          <div className="fieldErrorSlot">
-            {touchedWithdrawTo && withdrawToError ? <div className="errorText">{withdrawToError}</div> : null}
-          </div>
-
-          <div className="spacer12" />
-
-          <div className="label">Withdraw TAO amount</div>
-          <input
-            className={`input ${touchedWithdraw && withdrawAmountError ? 'inputError' : ''}`}
-            value={withdrawAmount}
-            disabled={actionsDisabled}
-            onChange={(e) => {
-              setTouchedWithdraw(true)
-              setWithdrawAmount(e.target.value)
-            }}
-            placeholder="e.g. 1.5"
-          />
-          <div className="fieldErrorSlot">
-            {touchedWithdraw && withdrawAmountError ? <div className="errorText">{withdrawAmountError}</div> : null}
-          </div>
-
-          {twoFaRequired ? (
-            <>
-              <div className="spacer12" />
-              <div className="label">2FA code (required for withdraw)</div>
-              <input
-                className="input"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                placeholder="000000"
-                maxLength={8}
-                value={withdrawTotp}
-                disabled={actionsDisabled}
-                onChange={(e) => setWithdrawTotp(e.target.value.replace(/\D/g, ''))}
-              />
-            </>
-          ) : null}
-
-          <div className="spacer12" />
-          <button
-            className="btn"
-            disabled={actionsDisabled}
-            onClick={async () => {
-              props.onError(null)
-              setActionError(null)
-              setTouchedNetuid(false)
-              setTouchedAmount(false)
-              setTouchedWithdraw(true)
-              setTouchedWithdrawTo(true)
-              if (withdrawToError || withdrawAmountError) return
-              if (!withdrawToOk) return
-              if (twoFaRequired && !withdrawTotp.trim()) {
-                setActionError('2FA code is required for withdraw')
-                return
-              }
-
-              let nextBalances = balances
-              if (!nextBalances) {
-                try {
-                  const resp = await getBalances(props.contract.id)
-                  nextBalances = {
-                    ownerBalanceWei: resp.ownerBalanceWei,
-                    contractBalanceWei: resp.contractBalanceWei,
-                    decimals: resp.decimals
-                  }
-                  setBalances(nextBalances)
-                } catch {
-                  // ignore; backend will enforce
-                }
-              }
-
-              if (nextBalances) {
-                const contractWei = safeBigIntString(nextBalances.contractBalanceWei)
-                const units = parseDecimalToUnits(normalizeDecimal(withdrawAmount), nextBalances.decimals)
-                if (contractWei !== null && units !== null && units > contractWei) {
-                  setTouchedWithdraw(true)
-                  return
-                }
-              }
-
-              const ok = await props.confirm({
-                title: 'Submit withdraw',
-                message: `to=${withdrawToValue}\namount=${normalizeDecimal(withdrawAmount)}`,
-                confirmText: 'Submit',
-                cancelText: 'Cancel'
-              })
-              if (!ok) return
-
-              setSubmitting('withdraw')
-              try {
-                const resp = await withdraw(props.contract.id, {
-                  amount: normalizeDecimal(withdrawAmount),
-                  to: withdrawToValue,
-                  ...(twoFaRequired ? { totp: withdrawTotp.trim() } : {})
-                })
-                props.requestRefresh()
-                const hash =
-                  resp && typeof resp === 'object' && 'hash' in resp && typeof (resp as any).hash === 'string'
-                    ? (resp as any).hash
-                    : null
-                props.onSuccess(hash ? `Withdraw submitted (${shortHash(hash)})` : 'Withdraw submitted')
-                if (twoFaRequired) setWithdrawTotp('')
-              } catch (e: any) {
-                const msg = e?.message || 'withdraw_failed'
-                if (msg === 'invalid_totp') {
-                  props.onError('Invalid 2FA code')
-                  setActionError('Invalid 2FA code')
-                } else {
-                  props.onError(msg)
-                  setActionError(msg)
-                }
-              } finally {
-                setSubmitting(null)
-              }
-            }}
-          >
-            {submitting === 'withdraw' ? 'Submitting…' : 'Withdraw TAO'}
-          </button>
-        </div>
-
-        <div>
-          <div className="row" style={{ justifyContent: 'space-between' }}>
-            <div>
-              <div className="muted">Current stakes</div>
-            </div>
-
-            <div className="rowWrap" style={{ alignItems: 'center' }}>
-              {stakesLoading ? (
-                <svg width="16" height="16" viewBox="0 0 50 50" aria-hidden="true">
-                  <circle
-                    cx="25"
-                    cy="25"
-                    r="20"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="6"
-                    strokeLinecap="round"
-                    strokeDasharray="31.4 31.4"
-                  >
-                    <animateTransform
-                      attributeName="transform"
-                      type="rotate"
-                      from="0 25 25"
-                      to="360 25 25"
-                      dur="1s"
-                      repeatCount="indefinite"
-                    />
-                  </circle>
-                </svg>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="spacer12" />
-
-          {stakesError ? <div className="errorText">{stakesError}</div> : null}
-
-          {stakesLoading && !stakes ? (
-            <div className="muted">Loading…</div>
-          ) : (
-            <div>
               <div className="rowWrap" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                 <div className="muted" style={{ fontSize: 13 }}>
                   {(() => {
@@ -3295,7 +2930,7 @@ function ContractDetail(props: {
                     style={{ width: 180 }}
                     inputMode="numeric"
                     value={stakesNetuidQuery}
-                    disabled={actionsDisabled}
+                    disabled={stakesLoading}
                     onChange={(e) => setStakesNetuidQuery(e.target.value.replace(/[^\d]/g, ''))}
                     placeholder="Search netuid"
                   />
@@ -3306,17 +2941,18 @@ function ContractDetail(props: {
                     className="input"
                     style={{ width: 100 }}
                     value={String(stakesPageSize)}
-                    disabled={actionsDisabled}
-                    onChange={(e) => setStakesPageSize(Number(e.target.value) || 10)}
+                    disabled={stakesLoading}
+                    onChange={(e) => setStakesPageSize(Number(e.target.value) || 15)}
                   >
                     <option value="10">10</option>
+                    <option value="15">15</option>
                     <option value="25">25</option>
                     <option value="50">50</option>
                     <option value="100">100</option>
                   </select>
                   <button
                     className="btn"
-                    disabled={actionsDisabled || stakesPage <= 0}
+                    disabled={stakesLoading || stakesPage <= 0}
                     onClick={() => setStakesPage((p) => Math.max(0, p - 1))}
                   >
                     Prev
@@ -3326,7 +2962,7 @@ function ContractDetail(props: {
                   </div>
                   <button
                     className="btn"
-                    disabled={actionsDisabled || stakesPage >= stakesPageCount - 1}
+                    disabled={stakesLoading || stakesPage >= stakesPageCount - 1}
                     onClick={() => setStakesPage((p) => Math.min(stakesPageCount - 1, p + 1))}
                   >
                     Next
@@ -3341,14 +2977,14 @@ function ContractDetail(props: {
               ) : null}
 
               <div style={{ overflowX: 'auto' }}>
-                <table className="table" style={{ width: '100%', minWidth: 920 }}>
+                <table className="table tableCompact" style={{ width: '100%', minWidth: 780 }}>
                   <thead>
                     <tr>
                       <th>
                         <button
                           type="button"
                           className="tableHeaderBtn"
-                          disabled={actionsDisabled}
+                          disabled={stakesLoading}
                           onClick={() =>
                             setSorting((s) =>
                               s.key === 'netuid'
@@ -3364,7 +3000,7 @@ function ContractDetail(props: {
                         <button
                           type="button"
                           className="tableHeaderBtn"
-                          disabled={actionsDisabled}
+                          disabled={stakesLoading}
                           onClick={() =>
                             setSorting((s) =>
                               s.key === 'alpha'
@@ -3380,7 +3016,7 @@ function ContractDetail(props: {
                         <button
                           type="button"
                           className="tableHeaderBtn"
-                          disabled={actionsDisabled}
+                          disabled={stakesLoading}
                           onClick={() =>
                             setSorting((s) =>
                               s.key === 'tao' ? { key: 'tao', dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: 'tao', dir: 'desc' }
@@ -3390,25 +3026,26 @@ function ContractDetail(props: {
                           Tao{sorting.key === 'tao' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </button>
                       </th>
+                      <th style={{ textAlign: 'right' }}>Current Price</th>
                       <th style={{ textAlign: 'right' }}>
                         <button
                           type="button"
                           className="tableHeaderBtn"
-                          disabled={actionsDisabled}
+                          disabled={stakesLoading}
                           onClick={() =>
                             setSorting((s) =>
                               s.key === 'pct' ? { key: 'pct', dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: 'pct', dir: 'desc' }
                             )
                           }
                         >
-                          Current Price{sorting.key === 'pct' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                          Change{sorting.key === 'pct' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </button>
                       </th>
                       <th style={{ textAlign: 'right' }}>
                         <button
                           type="button"
                           className="tableHeaderBtn"
-                          disabled={actionsDisabled}
+                          disabled={stakesLoading}
                           onClick={() =>
                             setSorting((s) =>
                               s.key === 'pool' ? { key: 'pool', dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: 'pool', dir: 'desc' }
@@ -3418,21 +3055,6 @@ function ContractDetail(props: {
                           Pool{sorting.key === 'pool' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </button>
                       </th>
-                      <th style={{ textAlign: 'right' }}>
-                        <button
-                          type="button"
-                          className="tableHeaderBtn"
-                          disabled={actionsDisabled}
-                          onClick={() =>
-                            setSorting((s) =>
-                              s.key === 'time' ? { key: 'time', dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: 'time', dir: 'desc' }
-                            )
-                          }
-                        >
-                          Stake Time{sorting.key === 'time' ? (sorting.dir === 'asc' ? ' ▲' : ' ▼') : ''}
-                        </button>
-                      </th>
-                      <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3456,105 +3078,25 @@ function ContractDetail(props: {
                             {s.taoAmount}
                           </td>
                           <td className="mono" style={{ textAlign: 'right' }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                              <div>{s.currentPrice ?? '-'}</div>
-                              <div className="muted" style={{ fontSize: 12 }}>
-                                {pctChange === null ? '-' : `${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%`}
-                              </div>
-                            </div>
+                            {s.currentPrice ?? '-'}
+                          </td>
+                          <td
+                            className={
+                              'mono ' +
+                              (pctChange === null
+                                ? ''
+                                : pctChange > 0
+                                ? 'pctPositive'
+                                : pctChange < 0
+                                ? 'pctNegative'
+                                : '')
+                            }
+                            style={{ textAlign: 'right' }}
+                          >
+                            {pctChange === null ? '-' : `${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%`}
                           </td>
                           <td className="mono" style={{ textAlign: 'right' }}>
                             {s.taoInPool ?? '-'}
-                          </td>
-                          <td
-                            className="mono"
-                            style={{ textAlign: 'right', whiteSpace: 'nowrap' }}
-                            title={formatStakeTimestampIso(s.stakeTime)}
-                          >
-                            {formatStakeTimestamp(s.stakeTime)}
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <button
-                              type="button"
-                              className="btn btnTiny"
-                              style={{ marginRight: 8 }}
-                              disabled={actionsDisabled || !canAddOrResetStake}
-                              onClick={async (e) => {
-                                e.preventDefault()
-                                props.onError(null)
-                                setActionError(null)
-
-                                const netuidValue = s.netuid
-
-                                const ok = await props.confirm({
-                                  title: 'Submit reset stake',
-                                  message: `netuid=${netuidValue}`,
-                                  confirmText: 'Submit',
-                                  cancelText: 'Cancel',
-                                  danger: true
-                                })
-                                if (!ok) return
-
-                                setSubmitting('reset')
-                                try {
-                                  const resp = await resetStake(props.contract.id, { netuid: netuidValue })
-                                  props.requestRefresh()
-                                  const hash =
-                                    resp && typeof resp === 'object' && 'hash' in resp && typeof (resp as any).hash === 'string'
-                                      ? (resp as any).hash
-                                      : null
-                                  props.onSuccess(hash ? `Reset stake submitted (${shortHash(hash)})` : 'Reset stake submitted')
-                                } catch (err: any) {
-                                  const msg = err?.message || 'reset_stake_failed'
-                                  props.onError(msg)
-                                  setActionError(msg)
-                                } finally {
-                                  setSubmitting(null)
-                                }
-                              }}
-                            >
-                              {submitting === 'reset' ? 'Submitting…' : 'Reset'}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btnDanger btnTiny"
-                              disabled={actionsDisabled || !canRemoveStake}
-                              onClick={async (e) => {
-                                e.preventDefault()
-                                props.onError(null)
-                                setActionError(null)
-
-                                const netuidValue = s.netuid
-
-                                const ok = await props.confirm({
-                                  title: 'Submit remove stake',
-                                  message: `netuid=${netuidValue}`,
-                                  confirmText: 'Submit',
-                                  cancelText: 'Cancel',
-                                  danger: true
-                                })
-                                if (!ok) return
-
-                                setSubmitting('remove')
-                                try {
-                                  const resp = await removeStake(props.contract.id, { netuid: netuidValue })
-                                  props.requestRefresh()
-                                  const hash =
-                                    resp && typeof resp === 'object' && 'hash' in resp && typeof (resp as any).hash === 'string'
-                                      ? (resp as any).hash
-                                      : null
-                                  props.onSuccess(hash ? `Remove stake submitted (${shortHash(hash)})` : 'Remove stake submitted')
-                                } catch (err: any) {
-                                  const msg = err?.message || 'remove_stake_failed'
-                                  props.onError(msg)
-                                  setActionError(msg)
-                                } finally {
-                                  setSubmitting(null)
-                                }
-                              }}
-                            >
-                              Remove
-                            </button>
                           </td>
                         </tr>
                       )
@@ -3564,8 +3106,6 @@ function ContractDetail(props: {
               </div>
             </div>
           )}
-        </div>
-      </div>
     </div>
   )
 }
@@ -3612,42 +3152,6 @@ function formatContractDate(iso: string | undefined): string {
     return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
   } catch {
     return '—'
-  }
-}
-
-function formatStakeTimestamp(unixSeconds: number | null | undefined): string {
-  if (typeof unixSeconds !== 'number' || !Number.isFinite(unixSeconds) || unixSeconds <= 0) return '—'
-  try {
-    const nowSeconds = Math.floor(Date.now() / 1000)
-    const delta = nowSeconds - Math.floor(unixSeconds)
-    if (!Number.isFinite(delta)) return '—'
-    if (delta < 0) {
-      const future = Math.abs(delta)
-      if (future < 60) return `${future}s`
-      if (future < 3600) return `${Math.floor(future / 60)}m`
-      if (future < 86400) return `${Math.floor(future / 3600)}h`
-      return `${Math.floor(future / 86400)}d`
-    }
-    if (delta < 10) return 'just now'
-    if (delta < 60) return `${delta}s`
-    if (delta < 3600) return `${Math.floor(delta / 60)}m`
-    if (delta < 86400) return `${Math.floor(delta / 3600)}h`
-    const days = Math.floor(delta / 86400)
-    const hours = Math.floor((delta % 86400) / 3600)
-    return `${days}d ${hours}h`
-  } catch {
-    return '—'
-  }
-}
-
-function formatStakeTimestampIso(unixSeconds: number | null | undefined): string | undefined {
-  if (typeof unixSeconds !== 'number' || !Number.isFinite(unixSeconds) || unixSeconds <= 0) return undefined
-  try {
-    const d = new Date(unixSeconds * 1000)
-    if (!Number.isFinite(d.getTime())) return undefined
-    return d.toISOString()
-  } catch {
-    return undefined
   }
 }
 
